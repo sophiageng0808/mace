@@ -73,6 +73,7 @@ class MACE(torch.nn.Module):
         use_edge_irreps_first: bool = False,
         radial_MLP: Optional[List[int]] = None,
         radial_type: Optional[str] = "bessel",
+        bessel_use_cosine: bool = False,
         heads: Optional[List[str]] = None,
         cueq_config: Optional[Dict[str, Any]] = None,
         embedding_specs: Optional[Dict[str, Any]] = None,
@@ -135,7 +136,9 @@ class MACE(torch.nn.Module):
             radial_type=radial_type,
             distance_transform=distance_transform,
             apply_cutoff=apply_cutoff,
+            bessel_use_cosine=bessel_use_cosine,
         )
+
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
         if pair_repulsion:
             self.pair_repulsion_fn = ZBLBasis(p=num_polynomial_cutoff)
@@ -646,6 +649,7 @@ class AtomicDipolesMACE(torch.nn.Module):
         use_so3: bool = False,  # pylint: disable=unused-argument
         distance_transform: str = "None",  # pylint: disable=unused-argument
         radial_type: Optional[str] = "bessel",
+        bessel_use_cosine: bool = False,
         radial_MLP: Optional[List[int]] = None,
         cueq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
         oeq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
@@ -672,6 +676,7 @@ class AtomicDipolesMACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            bessel_use_cosine=bessel_use_cosine,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
@@ -860,6 +865,7 @@ class AtomicDielectricMACE(torch.nn.Module):
         use_so3: bool = False,  # pylint: disable=unused-argument
         distance_transform: str = "None",  # pylint: disable=unused-argument
         radial_type: Optional[str] = "bessel",
+        bessel_use_cosine: bool = False,
         radial_MLP: Optional[List[int]] = None,
         cueq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
         oeq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
@@ -916,7 +922,9 @@ class AtomicDielectricMACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            bessel_use_cosine=bessel_use_cosine,
         )
+
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
         sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
@@ -1187,6 +1195,7 @@ class EnergyDipolesMACE(torch.nn.Module):
         use_reduced_cg: bool = True,  # pylint: disable=unused-argument
         use_so3: bool = False,  # pylint: disable=unused-argument
         distance_transform: str = "None",  # pylint: disable=unused-argument
+        bessel_use_cosine: bool = False,
         radial_MLP: Optional[List[int]] = None,
         cueq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
         oeq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
@@ -1210,7 +1219,9 @@ class EnergyDipolesMACE(torch.nn.Module):
             r_max=r_max,
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
+            bessel_use_cosine=bessel_use_cosine,
         )
+
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
         sh_irreps = o3.Irreps.spherical_harmonics(max_ell)

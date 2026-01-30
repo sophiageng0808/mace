@@ -8,7 +8,9 @@ from abc import abstractmethod
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 import torch.nn.functional
+import logging
 from e3nn import nn, o3
 from e3nn.util.jit import compile_mode
 
@@ -309,16 +311,12 @@ class AtomicEnergiesBlock(torch.nn.Module):
 
     def __init__(self, atomic_energies: Union[np.ndarray, torch.Tensor]):
         super().__init__()
-        # assert len(atomic_energies.shape) == 1
-
         self.register_buffer(
             "atomic_energies",
             torch.tensor(atomic_energies, dtype=torch.get_default_dtype()),
         )  # [n_elements, n_heads]
 
-    def forward(
-        self, x: torch.Tensor  # one-hot of elements [..., n_elements]
-    ) -> torch.Tensor:  # [..., ]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., ]
         return torch.matmul(x, torch.atleast_2d(self.atomic_energies).T)
 
     def __repr__(self):
@@ -330,7 +328,6 @@ class AtomicEnergiesBlock(torch.nn.Module):
         )
         return f"{self.__class__.__name__}(energies=[{formatted_energies}])"
 
-
 @compile_mode("script")
 class RadialEmbeddingBlock(torch.nn.Module):
     def __init__(
@@ -341,40 +338,68 @@ class RadialEmbeddingBlock(torch.nn.Module):
         radial_type: str = "bessel",
         distance_transform: str = "None",
         apply_cutoff: bool = True,
+        bessel_use_cosine: bool = False,
     ):
         super().__init__()
+
+        # Store for debugging / repr / sanity checks (TorchScript-safe as buffer)
+        self.register_buffer(
+            "_bessel_use_cosine",
+            torch.tensor(1 if bessel_use_cosine else 0, dtype=torch.int8),
+        )
+        self.radial_type = radial_type  # plain python str is fine
+
+        # Log once at init (avoid TorchScript / tracing)
+        if not torch.jit.is_scripting() and not torch.jit.is_tracing():
+            logging.info(
+                f"RadialEmbeddingBlock(radial_type={radial_type}, "
+                f"num_bessel={num_bessel}, r_max={r_max}, "
+                f"distance_transform={distance_transform}, apply_cutoff={apply_cutoff}, "
+                f"bessel_use_cosine={bessel_use_cosine})"
+            )
+
         if radial_type == "bessel":
-            self.bessel_fn = BesselBasis(r_max=r_max, num_basis=num_bessel)
+            self.bessel_fn = BesselBasis(
+                r_max=r_max,
+                num_basis=num_bessel,
+                use_cosine=bessel_use_cosine,
+            )
         elif radial_type == "gaussian":
             self.bessel_fn = GaussianBasis(r_max=r_max, num_basis=num_bessel)
         elif radial_type == "chebyshev":
             self.bessel_fn = ChebychevBasis(r_max=r_max, num_basis=num_bessel)
+        else:
+            raise ValueError(f"Unknown radial_type: {radial_type}")
+
         if distance_transform == "Agnesi":
             self.distance_transform = AgnesiTransform()
         elif distance_transform == "Soft":
             self.distance_transform = SoftTransform()
+        elif distance_transform == "None":
+            pass
+        else:
+            raise ValueError(f"Unknown distance_transform: {distance_transform}")
+
         self.cutoff_fn = PolynomialCutoff(r_max=r_max, p=num_polynomial_cutoff)
         self.out_dim = num_bessel
         self.apply_cutoff = apply_cutoff
 
     def forward(
         self,
-        edge_lengths: torch.Tensor,  # [n_edges, 1]
+        edge_lengths: torch.Tensor,  # [n_edges, 1] (or [n_edges])
         node_attrs: torch.Tensor,
         edge_index: torch.Tensor,
         atomic_numbers: torch.Tensor,
     ):
-        cutoff = self.cutoff_fn(edge_lengths)  # [n_edges, 1]
+        cutoff = self.cutoff_fn(edge_lengths)  # [n_edges, 1] or [n_edges]
         if hasattr(self, "distance_transform"):
             edge_lengths = self.distance_transform(
                 edge_lengths, node_attrs, edge_index, atomic_numbers
             )
         radial = self.bessel_fn(edge_lengths)  # [n_edges, n_basis]
-        if hasattr(self, "apply_cutoff"):
-            if not self.apply_cutoff:
-                return radial, cutoff
-        return radial * cutoff, None  # [n_edges, n_basis], [n_edges, 1]
-
+        if not self.apply_cutoff:
+            return radial, cutoff
+        return radial * cutoff, None
 
 @compile_mode("script")
 class EquivariantProductBasisBlock(torch.nn.Module):

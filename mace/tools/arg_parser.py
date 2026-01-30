@@ -156,6 +156,11 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         choices=["bessel", "gaussian", "chebyshev"],
     )
     parser.add_argument(
+        "--bessel_use_cosine",
+        action="store_true",
+        help="Use cosine instead of sine in BesselBasis (radial embedding).",
+    )
+    parser.add_argument(
         "--num_radial_basis",
         help="number of radial basis functions",
         type=int,
