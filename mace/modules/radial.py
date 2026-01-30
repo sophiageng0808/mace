@@ -20,8 +20,10 @@ class BesselBasis(torch.nn.Module):
     Equation (7)
     """
 
-    def __init__(self, r_max: float, num_basis=8, trainable=False):
+    def __init__(self, r_max: float, num_basis=8, trainable=False, use_cosine: bool = False):
         super().__init__()
+
+        self.use_cosine = use_cosine
 
         bessel_weights = (
             np.pi
@@ -47,13 +49,14 @@ class BesselBasis(torch.nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., 1]
-        numerator = torch.sin(self.bessel_weights * x)  # [..., num_basis]
+        arg = self.bessel_weights * x  # [..., num_basis]
+        numerator = torch.cos(arg) if self.use_cosine else torch.sin(arg)  # [..., num_basis]
         return self.prefactor * (numerator / x)
 
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={len(self.bessel_weights)}, "
-            f"trainable={self.bessel_weights.requires_grad})"
+            f"trainable={self.bessel_weights.requires_grad}, use_cosine={self.use_cosine})"
         )
 
 
