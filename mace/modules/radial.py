@@ -5,7 +5,7 @@
 ###########################################################################################
 
 import logging
-
+import os
 import ase
 import numpy as np
 import torch
@@ -18,6 +18,11 @@ from mace.tools.scatter import scatter_sum
 class BesselBasis(torch.nn.Module):
     """
     Equation (7)
+
+    Notes:
+    - In MACE, distances x are typically shaped [..., 1].
+    - This implementation also accepts x shaped [...] (1D) and will unsqueeze to [..., 1].
+    - For cosine mode, use (cos(k r) - 1) / r to avoid the 1/r singularity at r -> 0.
     """
 
     def __init__(self, r_max: float, num_basis=8, trainable=False, use_cosine: bool = False):
@@ -25,16 +30,21 @@ class BesselBasis(torch.nn.Module):
 
         self.use_cosine = use_cosine
 
-        bessel_weights = (
-            np.pi
-            / r_max
-            * torch.linspace(
+                        # Frequencies:
+                        # - Sine (original): k_n = n*pi/r_max, n=1..num_basis -> zeros at r_max
+                        # - Cosine (shifted): k_n = (n-1/2)*pi/r_max, n=1..num_basis -> zeros at r_max
+        if use_cosine:
+            bessel_weights = (np.pi / r_max) * (
+                torch.arange(num_basis, dtype=torch.get_default_dtype()) + 0.5
+            )
+        else:
+            bessel_weights = (np.pi / r_max) * torch.linspace(
                 start=1.0,
-                end=num_basis,
+                end=float(num_basis),
                 steps=num_basis,
                 dtype=torch.get_default_dtype(),
             )
-        )
+
         if trainable:
             self.bessel_weights = torch.nn.Parameter(bessel_weights)
         else:
@@ -48,10 +58,41 @@ class BesselBasis(torch.nn.Module):
             torch.tensor(np.sqrt(2.0 / r_max), dtype=torch.get_default_dtype()),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., 1]
-        arg = self.bessel_weights * x  # [..., num_basis]
-        numerator = torch.cos(arg) if self.use_cosine else torch.sin(arg)  # [..., num_basis]
-        return self.prefactor * (numerator / x)
+        # Small epsilon to avoid division by zero
+        self.register_buffer(
+            "eps", torch.tensor(1e-8, dtype=torch.get_default_dtype())
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 1:
+            x = x.unsqueeze(-1)
+
+        # Backward-compatible epsilon:
+        # - old checkpoints may not have self.eps
+        # - define eps locally on the correct device/dtype
+        eps = x.new_tensor(1e-8)
+
+        x_safe = torch.clamp(x, min=eps)
+        arg = x_safe * self.bessel_weights
+
+        env_flag = os.getenv("MACE_USE_COSINE_BESSEL", "").strip()
+        if env_flag != "":
+            use_cos = env_flag not in ("0", "false", "False", "no", "NO")
+        else:
+            use_cos = getattr(self, "use_cosine", False)
+
+        if use_cos:
+            numerator = torch.cos(arg) - 1.0
+        else:
+            numerator = torch.sin(arg)
+
+        if not hasattr(self, "_printed_mode"):
+            print("BesselBasis mode:", "cosine" if use_cos else "sine")
+            self._printed_mode = True
+
+        return self.prefactor * (numerator / x_safe)
+
+
 
     def __repr__(self):
         return (
@@ -70,9 +111,7 @@ class ChebychevBasis(torch.nn.Module):
         super().__init__()
         self.register_buffer(
             "n",
-            torch.arange(1, num_basis + 1, dtype=torch.get_default_dtype()).unsqueeze(
-                0
-            ),
+            torch.arange(1, num_basis + 1, dtype=torch.get_default_dtype()).unsqueeze(0),
         )
         self.num_basis = num_basis
         self.r_max = r_max
@@ -83,9 +122,7 @@ class ChebychevBasis(torch.nn.Module):
         return torch.special.chebyshev_polynomial_t(x, n)
 
     def __repr__(self):
-        return (
-            f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={self.num_basis},"
-        )
+        return f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={self.num_basis},"
 
 
 @compile_mode("script")
@@ -100,9 +137,7 @@ class GaussianBasis(torch.nn.Module):
             start=0.0, end=r_max, steps=num_basis, dtype=torch.get_default_dtype()
         )
         if trainable:
-            self.gaussian_weights = torch.nn.Parameter(
-                gaussian_weights, requires_grad=True
-            )
+            self.gaussian_weights = torch.nn.Parameter(gaussian_weights, requires_grad=True)
         else:
             self.register_buffer("gaussian_weights", gaussian_weights)
         self.coeff = -0.5 / (r_max / (num_basis - 1)) ** 2
@@ -124,17 +159,13 @@ class PolynomialCutoff(torch.nn.Module):
     def __init__(self, r_max: float, p=6):
         super().__init__()
         self.register_buffer("p", torch.tensor(p, dtype=torch.int))
-        self.register_buffer(
-            "r_max", torch.tensor(r_max, dtype=torch.get_default_dtype())
-        )
+        self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.calculate_envelope(x, self.r_max, self.p.to(torch.int))
 
     @staticmethod
-    def calculate_envelope(
-        x: torch.Tensor, r_max: torch.Tensor, p: torch.Tensor
-    ) -> torch.Tensor:
+    def calculate_envelope(x: torch.Tensor, r_max: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
         r_over_r_max = x / r_max
         envelope = (
             1.0
@@ -159,30 +190,20 @@ class ZBLBasis(torch.nn.Module):
     def __init__(self, p=6, trainable=False, **kwargs):
         super().__init__()
         if "r_max" in kwargs:
-            logging.warning(
-                "r_max is deprecated. r_max is determined from the covalent radii."
-            )
+            logging.warning("r_max is deprecated. r_max is determined from the covalent radii.")
 
-        # Pre-calculate the p coefficients for the ZBL potential
         self.register_buffer(
             "c",
-            torch.tensor(
-                [0.1818, 0.5099, 0.2802, 0.02817], dtype=torch.get_default_dtype()
-            ),
+            torch.tensor([0.1818, 0.5099, 0.2802, 0.02817], dtype=torch.get_default_dtype()),
         )
         self.register_buffer("p", torch.tensor(p, dtype=torch.int))
         self.register_buffer(
             "covalent_radii",
-            torch.tensor(
-                ase.data.covalent_radii,
-                dtype=torch.get_default_dtype(),
-            ),
+            torch.tensor(ase.data.covalent_radii, dtype=torch.get_default_dtype()),
         )
         if trainable:
             self.a_exp = torch.nn.Parameter(torch.tensor(0.300, requires_grad=True))
-            self.a_prefactor = torch.nn.Parameter(
-                torch.tensor(0.4543, requires_grad=True)
-            )
+            self.a_prefactor = torch.nn.Parameter(torch.tensor(0.4543, requires_grad=True))
         else:
             self.register_buffer("a_exp", torch.tensor(0.300))
             self.register_buffer("a_prefactor", torch.tensor(0.4543))
@@ -196,16 +217,10 @@ class ZBLBasis(torch.nn.Module):
     ) -> torch.Tensor:
         sender = edge_index[0]
         receiver = edge_index[1]
-        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(
-            -1
-        )
+        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(-1)
         Z_u = node_atomic_numbers[sender].to(torch.int64)
         Z_v = node_atomic_numbers[receiver].to(torch.int64)
-        a = (
-            self.a_prefactor
-            * 0.529
-            / (torch.pow(Z_u, self.a_exp) + torch.pow(Z_v, self.a_exp))
-        )
+        a = self.a_prefactor * 0.529 / (torch.pow(Z_u, self.a_exp) + torch.pow(Z_v, self.a_exp))
         r_over_a = x / a
         phi = (
             self.c[0] * torch.exp(-3.2 * r_over_a)
@@ -243,10 +258,7 @@ class AgnesiTransform(torch.nn.Module):
         self.register_buffer("a", torch.tensor(a, dtype=torch.get_default_dtype()))
         self.register_buffer(
             "covalent_radii",
-            torch.tensor(
-                ase.data.covalent_radii,
-                dtype=torch.get_default_dtype(),
-            ),
+            torch.tensor(ase.data.covalent_radii, dtype=torch.get_default_dtype()),
         )
         if trainable:
             self.a = torch.nn.Parameter(torch.tensor(1.0805, requires_grad=True))
@@ -262,9 +274,7 @@ class AgnesiTransform(torch.nn.Module):
     ) -> torch.Tensor:
         sender = edge_index[0]
         receiver = edge_index[1]
-        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(
-            -1
-        )
+        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(-1)
         Z_u = node_atomic_numbers[sender].to(torch.int64)
         Z_v = node_atomic_numbers[receiver].to(torch.int64)
         r_0: torch.Tensor = 0.5 * (self.covalent_radii[Z_u] + self.covalent_radii[Z_v])
@@ -279,9 +289,7 @@ class AgnesiTransform(torch.nn.Module):
         ).reciprocal_()
 
     def __repr__(self):
-        return (
-            f"{self.__class__.__name__}(a={self.a:.4f}, q={self.q:.4f}, p={self.p:.4f})"
-        )
+        return f"{self.__class__.__name__}(a={self.a:.4f}, q={self.q:.4f}, p={self.p:.4f})"
 
 
 @compile_mode("script")
@@ -293,25 +301,13 @@ class SoftTransform(torch.nn.Module):
     """
 
     def __init__(self, alpha: float = 4.0, trainable=False):
-        """
-        Args:
-            p1 (float): Lower "clamp" point.
-            alpha (float): Steepness; if None, defaults to ~6/(r0-p1).
-            trainable (bool): Whether to make parameters trainable.
-        """
         super().__init__()
-        # Initialize parameters
-        self.register_buffer(
-            "alpha", torch.tensor(alpha, dtype=torch.get_default_dtype())
-        )
+        self.register_buffer("alpha", torch.tensor(alpha, dtype=torch.get_default_dtype()))
         if trainable:
             self.alpha = torch.nn.Parameter(self.alpha.clone())
         self.register_buffer(
             "covalent_radii",
-            torch.tensor(
-                ase.data.covalent_radii,
-                dtype=torch.get_default_dtype(),
-            ),
+            torch.tensor(ase.data.covalent_radii, dtype=torch.get_default_dtype()),
         )
 
     def compute_r_0(
@@ -320,22 +316,9 @@ class SoftTransform(torch.nn.Module):
         edge_index: torch.Tensor,
         atomic_numbers: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Compute r_0 based on atomic information.
-
-        Args:
-            node_attrs (torch.Tensor): Node attributes (one-hot encoding of atomic numbers).
-            edge_index (torch.Tensor): Edge index indicating connections.
-            atomic_numbers (torch.Tensor): Atomic numbers.
-
-        Returns:
-            torch.Tensor: r_0 values for each edge.
-        """
         sender = edge_index[0]
         receiver = edge_index[1]
-        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(
-            -1
-        )
+        node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(-1)
         Z_u = node_atomic_numbers[sender].to(torch.int64)
         Z_v = node_atomic_numbers[receiver].to(torch.int64)
         r_0: torch.Tensor = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
@@ -348,7 +331,6 @@ class SoftTransform(torch.nn.Module):
         edge_index: torch.Tensor,
         atomic_numbers: torch.Tensor,
     ) -> torch.Tensor:
-
         r_0 = self.compute_r_0(node_attrs, edge_index, atomic_numbers)
         p_0 = (3 / 4) * r_0
         p_1 = (4 / 3) * r_0
