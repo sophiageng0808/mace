@@ -6,6 +6,7 @@
 
 import logging
 import os
+
 import ase
 import numpy as np
 import torch
@@ -15,25 +16,42 @@ from mace.tools.scatter import scatter_sum
 
 
 @compile_mode("script")
+@compile_mode("script")
 class BesselBasis(torch.nn.Module):
     """
     Equation (7)
 
-    Notes:
-    - In MACE, distances x are typically shaped [..., 1].
-    - This implementation also accepts x shaped [...] (1D) and will unsqueeze to [..., 1].
-    - For cosine mode, use (cos(k r) - 1) / r to avoid the 1/r singularity at r -> 0.
+    Modes (set via env var MACE_BESSEL_MODE):
+    - "sine"          : sin(k r) / r
+    - "cos_over_r"    : cos(k r) / r  (singular at r->0; risky)
+    - "cosm1_over_r"  : (cos(k r) - 1) / r  (desingularized; recommended)
+    - "cos"           : cos(k r)      (no /r)
+
+    Backward-compat:
+    - accepts use_cosine=... because blocks.py passes it.
+    - if MACE_BESSEL_MODE is NOT set:
+        use_cosine=False -> sine
+        use_cosine=True  -> cosm1_over_r   (you can change this default)
     """
 
-    def __init__(self, r_max: float, num_basis=8, trainable=False, use_cosine: bool = False):
+    def __init__(
+        self,
+        r_max: float,
+        num_basis: int = 8,
+        trainable: bool = False,
+        use_cosine: bool = False,     
+        radial_mode: str = "sine",    
+        eps: float = 1e-8,
+        **kwargs,                     
+    ):
         super().__init__()
-
         self.use_cosine = use_cosine
+        self.radial_mode = radial_mode
 
-                        # Frequencies:
-                        # - Sine (original): k_n = n*pi/r_max, n=1..num_basis -> zeros at r_max
-                        # - Cosine (shifted): k_n = (n-1/2)*pi/r_max, n=1..num_basis -> zeros at r_max
-        if use_cosine:
+        rm = str(radial_mode).lower()
+        use_cos_family_default = bool(use_cosine) or (rm in ("cos_over_r", "cosm1_over_r", "cos", "cosine"))
+
+        if use_cos_family_default:
             bessel_weights = (np.pi / r_max) * (
                 torch.arange(num_basis, dtype=torch.get_default_dtype()) + 0.5
             )
@@ -50,56 +68,63 @@ class BesselBasis(torch.nn.Module):
         else:
             self.register_buffer("bessel_weights", bessel_weights)
 
-        self.register_buffer(
-            "r_max", torch.tensor(r_max, dtype=torch.get_default_dtype())
-        )
-        self.register_buffer(
-            "prefactor",
-            torch.tensor(np.sqrt(2.0 / r_max), dtype=torch.get_default_dtype()),
-        )
+        self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
+        self.register_buffer("prefactor", torch.tensor(np.sqrt(2.0 / r_max), dtype=torch.get_default_dtype()))
+        self.register_buffer("eps", torch.tensor(eps, dtype=torch.get_default_dtype()))
 
-        # Small epsilon to avoid division by zero
-        self.register_buffer(
-            "eps", torch.tensor(1e-8, dtype=torch.get_default_dtype())
-        )
+    def _resolve_mode(self) -> str:
+        env_mode = os.getenv("MACE_BESSEL_MODE", "").strip()
+        if env_mode != "":
+            mode = env_mode
+        else:
+            mode = "cosm1_over_r" if getattr(self, "use_cosine", False) else "sine"
+            rm = getattr(self, "radial_mode", "")
+            if rm:
+                rm_l = str(rm).lower()
+                if rm_l not in ("", "sine", "sin"):
+                    mode = rm_l
+
+        mode = str(mode).lower()
+        if mode in ("sin", "sine"):
+            return "sine"
+        if mode in ("cos_over_r", "cosoverr", "cos/r"):
+            return "cos_over_r"
+        if mode in ("cosm1_over_r", "cosminus1_over_r", "cosm1/r", "cos-1_over_r"):
+            return "cosm1_over_r"
+        if mode in ("cos", "cosine"):
+            return "cos"
+        raise ValueError(f"Unknown BesselBasis mode: {mode}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() == 1:
             x = x.unsqueeze(-1)
 
-        # Backward-compatible epsilon:
-        # - old checkpoints may not have self.eps
-        # - define eps locally on the correct device/dtype
-        eps = x.new_tensor(1e-8)
-
+        eps = x.new_tensor(float(self.eps.item()) if hasattr(self, "eps") else 1e-8)
         x_safe = torch.clamp(x, min=eps)
         arg = x_safe * self.bessel_weights
 
-        env_flag = os.getenv("MACE_USE_COSINE_BESSEL", "").strip()
-        if env_flag != "":
-            use_cos = env_flag not in ("0", "false", "False", "no", "NO")
-        else:
-            use_cos = getattr(self, "use_cosine", False)
+        mode = self._resolve_mode()
 
-        if use_cos:
-            numerator = torch.cos(arg) - 1.0
-        else:
-            numerator = torch.sin(arg)
+        if mode == "sine":
+            out = torch.sin(arg) / x_safe
+        elif mode == "cos_over_r":
+            out = torch.cos(arg) / x_safe
+        elif mode == "cosm1_over_r":
+            out = (torch.cos(arg) - 1.0) / x_safe
+        else:  # "cos"
+            out = torch.cos(arg)
 
         if not hasattr(self, "_printed_mode"):
-            print("BesselBasis mode:", "cosine" if use_cos else "sine")
+            print("BesselBasis mode:", mode)
             self._printed_mode = True
 
-        return self.prefactor * (numerator / x_safe)
-
-
+        return self.prefactor * out
 
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={len(self.bessel_weights)}, "
-            f"trainable={self.bessel_weights.requires_grad}, use_cosine={self.use_cosine})"
+            f"trainable={self.bessel_weights.requires_grad}, use_cosine={self.use_cosine}, radial_mode={self.radial_mode})"
         )
-
 
 @compile_mode("script")
 class ChebychevBasis(torch.nn.Module):
@@ -107,7 +132,7 @@ class ChebychevBasis(torch.nn.Module):
     Equation (7)
     """
 
-    def __init__(self, r_max: float, num_basis=8):
+    def __init__(self, r_max: float, num_basis: int = 8):
         super().__init__()
         self.register_buffer(
             "n",
@@ -122,7 +147,7 @@ class ChebychevBasis(torch.nn.Module):
         return torch.special.chebyshev_polynomial_t(x, n)
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={self.num_basis},"
+        return f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={self.num_basis})"
 
 
 @compile_mode("script")
@@ -131,7 +156,7 @@ class GaussianBasis(torch.nn.Module):
     Gaussian basis functions
     """
 
-    def __init__(self, r_max: float, num_basis=128, trainable=False):
+    def __init__(self, r_max: float, num_basis: int = 128, trainable: bool = False):
         super().__init__()
         gaussian_weights = torch.linspace(
             start=0.0, end=r_max, steps=num_basis, dtype=torch.get_default_dtype()
@@ -150,13 +175,13 @@ class GaussianBasis(torch.nn.Module):
 @compile_mode("script")
 class PolynomialCutoff(torch.nn.Module):
     """Polynomial cutoff function that goes from 1 to 0 as x goes from 0 to r_max.
-    Equation (8) -- TODO: from where?
+    Equation (8)
     """
 
     p: torch.Tensor
     r_max: torch.Tensor
 
-    def __init__(self, r_max: float, p=6):
+    def __init__(self, r_max: float, p: int = 6):
         super().__init__()
         self.register_buffer("p", torch.tensor(p, dtype=torch.int))
         self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
@@ -187,7 +212,7 @@ class ZBLBasis(torch.nn.Module):
 
     p: torch.Tensor
 
-    def __init__(self, p=6, trainable=False, **kwargs):
+    def __init__(self, p: int = 6, trainable: bool = False, **kwargs):
         super().__init__()
         if "r_max" in kwargs:
             logging.warning("r_max is deprecated. r_max is determined from the covalent radii.")
@@ -250,7 +275,7 @@ class AgnesiTransform(torch.nn.Module):
         q: float = 0.9183,
         p: float = 4.5791,
         a: float = 1.0805,
-        trainable=False,
+        trainable: bool = False,
     ):
         super().__init__()
         self.register_buffer("q", torch.tensor(q, dtype=torch.get_default_dtype()))
@@ -300,7 +325,7 @@ class SoftTransform(torch.nn.Module):
     which smoothly transitions from ~p1 for x << p1 to ~x for x >> r0.
     """
 
-    def __init__(self, alpha: float = 4.0, trainable=False):
+    def __init__(self, alpha: float = 4.0, trainable: bool = False):
         super().__init__()
         self.register_buffer("alpha", torch.tensor(alpha, dtype=torch.get_default_dtype()))
         if trainable:

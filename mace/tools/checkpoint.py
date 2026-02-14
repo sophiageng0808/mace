@@ -27,8 +27,10 @@ class CheckpointState:
 class CheckpointBuilder:
     @staticmethod
     def create_checkpoint(state: CheckpointState) -> Checkpoint:
+        # Unwrap DDP if needed, so the state_dict keys don't get "module." prefixed
+        model = state.model.module if hasattr(state.model, "module") else state.model
         return {
-            "model": state.model.state_dict(),
+            "model": model.state_dict(),
             "optimizer": state.optimizer.state_dict(),
             "lr_scheduler": state.lr_scheduler.state_dict(),
         }
@@ -84,9 +86,7 @@ class CheckpointIO:
     def _list_file_paths(self) -> List[str]:
         if not os.path.isdir(self.directory):
             return []
-        all_paths = [
-            os.path.join(self.directory, f) for f in os.listdir(self.directory)
-        ]
+        all_paths = [os.path.join(self.directory, f) for f in os.listdir(self.directory)]
         return [path for path in all_paths if os.path.isfile(path)]
 
     def _parse_checkpoint_path(self, path: str) -> Optional[CheckpointPathInfo]:
@@ -113,47 +113,32 @@ class CheckpointIO:
             swa=swa,
         )
 
-    def _get_latest_checkpoint_path(self, swa) -> Optional[str]:
+    def _get_latest_checkpoint_path(self, swa: bool) -> Optional[str]:
         all_file_paths = self._list_file_paths()
-        checkpoint_info_list = [
-            self._parse_checkpoint_path(path) for path in all_file_paths
-        ]
-        selected_checkpoint_info_list = [
-            info for info in checkpoint_info_list if info and info.tag == self.tag
-        ]
+        checkpoint_info_list = [self._parse_checkpoint_path(path) for path in all_file_paths]
+        selected = [info for info in checkpoint_info_list if info and info.tag == self.tag]
 
-        if len(selected_checkpoint_info_list) == 0:
-            logging.warning(
-                f"Cannot find checkpoint with tag '{self.tag}' in '{self.directory}'"
-            )
+        if len(selected) == 0:
+            logging.warning(f"Cannot find checkpoint with tag '{self.tag}' in '{self.directory}'")
             return None
 
-        selected_checkpoint_info_list_swa = []
-        selected_checkpoint_info_list_no_swa = []
+        swa_list = [ckp for ckp in selected if ckp.swa]
+        noswa_list = [ckp for ckp in selected if not ckp.swa]
 
-        for ckp in selected_checkpoint_info_list:
-            if ckp.swa:
-                selected_checkpoint_info_list_swa.append(ckp)
-            else:
-                selected_checkpoint_info_list_no_swa.append(ckp)
         if swa:
-            try:
-                latest_checkpoint_info = max(
-                    selected_checkpoint_info_list_swa, key=lambda info: info.epochs
-                )
-            except ValueError:
+            if len(swa_list) == 0:
                 logging.warning(
-                    "No SWA checkpoint found, while SWA is enabled. Compare the swa_start parameter and the latest checkpoint."
+                    "No SWA checkpoint found while SWA is enabled. "
+                    "Check swa_start and latest checkpoints."
                 )
+                return None
+            latest = max(swa_list, key=lambda info: info.epochs)
         else:
-            latest_checkpoint_info = max(
-                selected_checkpoint_info_list_no_swa, key=lambda info: info.epochs
-            )
-        return latest_checkpoint_info.path
+            latest = max(noswa_list, key=lambda info: info.epochs)
 
-    def save(
-        self, checkpoint: Checkpoint, epochs: int, keep_last: bool = False
-    ) -> None:
+        return latest.path
+
+    def save(self, checkpoint: Checkpoint, epochs: int, keep_last: bool = False) -> None:
         if not self.keep and self.old_path and not keep_last:
             logging.debug(f"Deleting old checkpoint file: {self.old_path}")
             os.remove(self.old_path)
@@ -162,25 +147,24 @@ class CheckpointIO:
         path = os.path.join(self.directory, filename)
         logging.debug(f"Saving checkpoint: {path}")
         os.makedirs(self.directory, exist_ok=True)
-        torch.save(obj=checkpoint, f=path)
+
+        # Save exactly the checkpoint object provided
+        torch.save(checkpoint, path)
+
         self.old_path = path
 
     def load_latest(
         self, swa: Optional[bool] = False, device: Optional[torch.device] = None
     ) -> Optional[Tuple[Checkpoint, int]]:
-        path = self._get_latest_checkpoint_path(swa=swa)
+        path = self._get_latest_checkpoint_path(swa=bool(swa))
         if path is None:
             return None
-
         return self.load(path, device=device)
 
-    def load(
-        self, path: str, device: Optional[torch.device] = None
-    ) -> Tuple[Checkpoint, int]:
+    def load(self, path: str, device: Optional[torch.device] = None) -> Tuple[Checkpoint, int]:
         checkpoint_info = self._parse_checkpoint_path(path)
-
         if checkpoint_info is None:
-            raise RuntimeError(f"Cannot find path '{path}'")
+            raise RuntimeError(f"Cannot parse checkpoint path '{path}'")
 
         logging.info(f"Loading checkpoint: {checkpoint_info.path}")
         return (
@@ -194,23 +178,27 @@ class CheckpointHandler:
         self.io = CheckpointIO(*args, **kwargs)
         self.builder = CheckpointBuilder()
 
-    def save(
-        self, state: CheckpointState, epochs: int, keep_last: bool = False
-    ) -> None:
+    def save(self, state: CheckpointState, epochs: int, keep_last: bool = False) -> None:
+        # 1) Save checkpoint (state_dicts)
         checkpoint = self.builder.create_checkpoint(state)
         self.io.save(checkpoint, epochs, keep_last)
+
+        # 2) Save a template model object (architecture + weights) next to run dir
+        to_save = state.model.module if hasattr(state.model, "module") else state.model
+        run_dir = os.path.dirname(self.io.directory)  # parent of checkpoints/
+        os.makedirs(run_dir, exist_ok=True)
+        torch.save(to_save, os.path.join(run_dir, "model.model"))
 
     def load_latest(
         self,
         state: CheckpointState,
         swa: Optional[bool] = False,
         device: Optional[torch.device] = None,
-        strict=False,
+        strict: bool = False,
     ) -> Optional[int]:
         result = self.io.load_latest(swa=swa, device=device)
         if result is None:
             return None
-
         checkpoint, epochs = result
         self.builder.load_checkpoint(state=state, checkpoint=checkpoint, strict=strict)
         return epochs
@@ -219,7 +207,7 @@ class CheckpointHandler:
         self,
         state: CheckpointState,
         path: str,
-        strict=False,
+        strict: bool = False,
         device: Optional[torch.device] = None,
     ) -> int:
         checkpoint, epochs = self.io.load(path, device=device)
