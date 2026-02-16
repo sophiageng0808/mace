@@ -14,6 +14,7 @@ from e3nn.util.jit import compile_mode
 
 from mace.tools.scatter import scatter_sum
 
+
 @compile_mode("script")
 class BesselBasis(torch.nn.Module):
     """
@@ -21,15 +22,13 @@ class BesselBasis(torch.nn.Module):
 
     Modes (set via env var MACE_BESSEL_MODE):
     - "sine"          : sin(k r) / r
-    - "cos_over_r"    : cos(k r) / r  (singular at r->0; risky)
-    - "cosm1_over_r"  : (cos(k r) - 1) / r  (desingularized; recommended)
-    - "cos"           : cos(k r)      (no /r)
+    - "cos_over_r"    : cos(k r) / r
+    - "cosm1_over_r"  : (cos(k r) - 1) / r
+    - "cos"           : cos(k r)
 
-    Backward-compat:
-    - accepts use_cosine=... because blocks.py passes it.
-    - if MACE_BESSEL_MODE is NOT set:
-        use_cosine=False -> sine
-        use_cosine=True  -> cosm1_over_r   (you can change this default)
+    NOTE (TorchScript-safe):
+    - We resolve env/config ONCE in __init__ and store an integer mode_id buffer.
+    - forward() uses only tensor ops + integer branching (no os.getenv, no dynamic attrs).
     """
 
     def __init__(
@@ -37,19 +36,65 @@ class BesselBasis(torch.nn.Module):
         r_max: float,
         num_basis: int = 8,
         trainable: bool = False,
-        use_cosine: bool = False,     
-        radial_mode: str = "sine",    
+        use_cosine: bool = False,     # backward compat (blocks.py passes this)
+        radial_mode: str = "sine",    # optional arg if you ever wire it through
         eps: float = 1e-8,
-        **kwargs,                     
+        **kwargs,
     ):
         super().__init__()
         self.use_cosine = use_cosine
         self.radial_mode = radial_mode
 
-        rm = str(radial_mode).lower()
-        use_cos_family_default = bool(use_cosine) or (rm in ("cos_over_r", "cosm1_over_r", "cos", "cosine"))
+        # -----------------------------
+        # Resolve mode ONCE (script-safe)
+        # Priority:
+        #  1) env var MACE_BESSEL_MODE (if set and non-empty)
+        #  2) radial_mode (if not empty/non-sine-ish)
+        #  3) fallback: use_cosine ? "cosm1_over_r" : "sine"
+        # -----------------------------
+        mode = os.getenv("MACE_BESSEL_MODE", "").strip().lower()
 
-        if use_cos_family_default:
+        if mode == "":
+            rm = str(radial_mode).strip().lower() if radial_mode is not None else ""
+            if rm not in ("", "sine", "sin"):
+                mode = rm
+            else:
+                mode = "cosm1_over_r" if bool(use_cosine) else "sine"
+
+        # canonicalize aliases
+        if mode in ("sin", "sine"):
+            mode = "sine"
+        elif mode in ("cos_over_r", "cosoverr", "cos/r"):
+            mode = "cos_over_r"
+        elif mode in ("cosm1_over_r", "cosminus1_over_r", "cosm1/r", "cos-1_over_r"):
+            mode = "cosm1_over_r"
+        elif mode in ("cos", "cosine"):
+            mode = "cos"
+        else:
+            raise ValueError(f"Unknown BesselBasis mode: {mode}")
+
+        # store as int buffer for TorchScript-safe branching in forward()
+        mode_map = {"sine": 0, "cos_over_r": 1, "cosm1_over_r": 2, "cos": 3}
+        self.register_buffer("mode_id", torch.tensor(mode_map[mode], dtype=torch.int64))
+
+        # One-time debug print is safe here (not in forward)
+        print(f"[BesselBasis __init__] mode={mode} (id={mode_map[mode]})", flush=True)
+
+        # -----------------------------
+        # Frequencies (weights)
+        #
+        # Keep your previous behavior:
+        # - "cos-family default" uses half-integers (n+0.5) pi/rmax
+        # - sine uses integers n pi/rmax
+        #
+        # IMPORTANT: This is independent of env-mode (by your original design).
+        # If you *want* weights to depend on env-mode, change cos_family_default below
+        # to use (mode != "sine") instead of use_cosine/radial_mode.
+        # -----------------------------
+        # Use half-integer frequencies for ALL cosine-family modes
+        cos_family_default = (mode != "sine")
+
+        if cos_family_default:
             bessel_weights = (np.pi / r_max) * (
                 torch.arange(num_basis, dtype=torch.get_default_dtype()) + 0.5
             )
@@ -61,6 +106,7 @@ class BesselBasis(torch.nn.Module):
                 dtype=torch.get_default_dtype(),
             )
 
+
         if trainable:
             self.bessel_weights = torch.nn.Parameter(bessel_weights)
         else:
@@ -68,53 +114,25 @@ class BesselBasis(torch.nn.Module):
 
         self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
         self.register_buffer("prefactor", torch.tensor(np.sqrt(2.0 / r_max), dtype=torch.get_default_dtype()))
-        self.register_buffer("eps", torch.tensor(eps, dtype=torch.get_default_dtype()))
-
-    def _resolve_mode(self) -> str:
-        env_mode = os.getenv("MACE_BESSEL_MODE", "").strip()
-        if env_mode != "":
-            mode = env_mode
-        else:
-            mode = "cosm1_over_r" if getattr(self, "use_cosine", False) else "sine"
-            rm = getattr(self, "radial_mode", "")
-            if rm:
-                rm_l = str(rm).lower()
-                if rm_l not in ("", "sine", "sin"):
-                    mode = rm_l
-
-        mode = str(mode).lower()
-        if mode in ("sin", "sine"):
-            return "sine"
-        if mode in ("cos_over_r", "cosoverr", "cos/r"):
-            return "cos_over_r"
-        if mode in ("cosm1_over_r", "cosminus1_over_r", "cosm1/r", "cos-1_over_r"):
-            return "cosm1_over_r"
-        if mode in ("cos", "cosine"):
-            return "cos"
-        raise ValueError(f"Unknown BesselBasis mode: {mode}")
+        self.register_buffer("eps", torch.tensor(float(eps), dtype=torch.get_default_dtype()))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() == 1:
             x = x.unsqueeze(-1)
 
-        eps = x.new_tensor(float(self.eps.item()) if hasattr(self, "eps") else 1e-8)
-        x_safe = torch.clamp(x, min=eps)
+        # avoid 1/0 singularities in /r modes
+        x_safe = torch.clamp(x, min=self.eps)
         arg = x_safe * self.bessel_weights
 
-        mode = self._resolve_mode()
-
-        if mode == "sine":
+        mid = int(self.mode_id.item())
+        if mid == 0:  # sine
             out = torch.sin(arg) / x_safe
-        elif mode == "cos_over_r":
+        elif mid == 1:  # cos_over_r
             out = torch.cos(arg) / x_safe
-        elif mode == "cosm1_over_r":
+        elif mid == 2:  # (cos-1)/r
             out = (torch.cos(arg) - 1.0) / x_safe
-        else:  # "cos"
+        else:  # mid == 3, cos
             out = torch.cos(arg)
-
-        if not hasattr(self, "_printed_mode"):
-            print("BesselBasis mode:", mode)
-            self._printed_mode = True
 
         return self.prefactor * out
 
@@ -123,6 +141,7 @@ class BesselBasis(torch.nn.Module):
             f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={len(self.bessel_weights)}, "
             f"trainable={self.bessel_weights.requires_grad}, use_cosine={self.use_cosine}, radial_mode={self.radial_mode})"
         )
+
 
 @compile_mode("script")
 class ChebychevBasis(torch.nn.Module):
