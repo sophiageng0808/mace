@@ -36,8 +36,8 @@ class BesselBasis(torch.nn.Module):
         r_max: float,
         num_basis: int = 8,
         trainable: bool = False,
-        use_cosine: bool = False,     # backward compat (blocks.py passes this)
-        radial_mode: str = "sine",    # optional arg if you ever wire it through
+        use_cosine: bool = False,   
+        radial_mode: str = "sine",    
         eps: float = 1e-8,
         **kwargs,
     ):
@@ -45,13 +45,6 @@ class BesselBasis(torch.nn.Module):
         self.use_cosine = use_cosine
         self.radial_mode = radial_mode
 
-        # -----------------------------
-        # Resolve mode ONCE (script-safe)
-        # Priority:
-        #  1) env var MACE_BESSEL_MODE (if set and non-empty)
-        #  2) radial_mode (if not empty/non-sine-ish)
-        #  3) fallback: use_cosine ? "cosm1_over_r" : "sine"
-        # -----------------------------
         mode = os.getenv("MACE_BESSEL_MODE", "").strip().lower()
 
         if mode == "":
@@ -77,21 +70,8 @@ class BesselBasis(torch.nn.Module):
         mode_map = {"sine": 0, "cos_over_r": 1, "cosm1_over_r": 2, "cos": 3}
         self.register_buffer("mode_id", torch.tensor(mode_map[mode], dtype=torch.int64))
 
-        # One-time debug print is safe here (not in forward)
         print(f"[BesselBasis __init__] mode={mode} (id={mode_map[mode]})", flush=True)
 
-        # -----------------------------
-        # Frequencies (weights)
-        #
-        # Keep your previous behavior:
-        # - "cos-family default" uses half-integers (n+0.5) pi/rmax
-        # - sine uses integers n pi/rmax
-        #
-        # IMPORTANT: This is independent of env-mode (by your original design).
-        # If you *want* weights to depend on env-mode, change cos_family_default below
-        # to use (mode != "sine") instead of use_cosine/radial_mode.
-        # -----------------------------
-        # Use half-integer frequencies for ALL cosine-family modes
         cos_family_default = (mode != "sine")
 
         if cos_family_default:
