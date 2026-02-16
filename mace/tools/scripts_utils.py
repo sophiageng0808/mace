@@ -2,7 +2,7 @@
 # Training utils
 # Authors: David Kovacs, Ilyes Batatia
 # This program is distributed under the MIT License (see MIT.md)
-###########################################################################################
+###########################################################################################                                                                                          
 
 import argparse
 import ast
@@ -30,14 +30,63 @@ class SubsetCollection:
     valid: data.Configurations
     tests: List[Tuple[str, data.Configurations]]
 
+def _cutoff_from_env(default_kind: str = "polynomial"):
+    """
+    Read cutoff configuration from environment.
+
+    Supported:
+      MACE_CUTOFF_KIND in {"polynomial","cosine","poly_over_rn"}
+      MACE_CUTOFF_ENV_N (int)
+      MACE_CUTOFF_ENV_EPS (float)
+
+    Returns: (kind, env_n, env_eps)
+    """
+    kind = os.environ.get("MACE_CUTOFF_KIND", default_kind).strip()
+    env_n = int(os.environ.get("MACE_CUTOFF_ENV_N", "1"))
+    env_eps = float(os.environ.get("MACE_CUTOFF_ENV_EPS", "1e-3"))
+
+    # tiny sanity check (don’t crash, just warn)
+    if kind not in ("polynomial", "cosine", "poly_over_rn"):
+        logging.warning(
+            f"[cutoff] Unknown MACE_CUTOFF_KIND='{kind}', falling back to '{default_kind}'"
+        )
+        kind = default_kind
+
+    return kind, env_n, env_eps
+
+def _inject_cutoff_into_model_config(model_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensures model_config contains cutoff_kind/cutoff_env_* keys.
+    Environment variables take precedence (so SLURM array jobs can override).
+    """
+    # defaults from config (if present) then overridden by env
+    cfg_default_kind = model_config.get("cutoff_kind", "polynomial")
+    kind, env_n, env_eps = _cutoff_from_env(cfg_default_kind)
+
+    model_config["cutoff_kind"] = kind
+    model_config["cutoff_env_n"] = int(env_n)
+    model_config["cutoff_env_eps"] = float(env_eps)
+
+    logging.info(
+        f"[cutoff] Using cutoff_kind={model_config['cutoff_kind']} "
+        f"cutoff_env_n={model_config['cutoff_env_n']} "
+        f"cutoff_env_eps={model_config['cutoff_env_eps']}"
+    )
+    return model_config
 
 def log_dataset_contents(dataset: data.Configurations, dataset_name: str) -> None:
     log_string = f"{dataset_name} ["
     for prop_name in dataset[0].properties.keys():
         if prop_name == "dipole":
-            log_string += f"{prop_name} components: {int(np.sum([np.sum(config.property_weights[prop_name]) for config in dataset]))}, "
+            log_string += (
+                f"{prop_name} components: "
+                f"{int(np.sum([np.sum(config.property_weights[prop_name]) for config in dataset]))}, "
+            )
         else:
-            log_string += f"{prop_name}: {int(np.sum([config.property_weights[prop_name] for config in dataset]))}, "
+            log_string += (
+                f"{prop_name}: "
+                f"{int(np.sum([config.property_weights[prop_name] for config in dataset]))}, "
+            )
     log_string = log_string[:-2] + "]"
     logging.info(log_string)
 
@@ -78,7 +127,7 @@ def get_dataset_from_xyz(
             - SubsetCollection with train, valid, and test configurations
             - Dictionary of atomic energies (or None if not available)
     """
-    # Convert input paths to lists if they're not already
+                                                         
     train_paths = [train_path] if isinstance(train_path, str) else train_path
     valid_paths = (
         [valid_path]
@@ -91,30 +140,30 @@ def get_dataset_from_xyz(
         else test_path
     )
 
-    # Initialize collections and atomic energies tracking
+                                                         
     all_train_configs = []
     all_valid_configs = []
     all_test_configs = []
 
-    # For tracking atomic energies across files
-    atomic_energies_values = {}  # Element Z -> list of energy values
-    atomic_energies_counts = {}  # Element Z -> count of files with this element
+                                               
+    atomic_energies_values = {}                                      
+    atomic_energies_counts = {}                                                 
 
-    # Process training files
+                            
     for i, path in enumerate(train_paths):
         logging.debug(f"Loading training file: {path}")
         ae_dict, train_configs = data.load_from_xyz(
             file_path=path,
             config_type_weights=config_type_weights,
             key_specification=key_specification,
-            extract_atomic_energies=True,  # Extract from all files to average
+            extract_atomic_energies=True,                                     
             keep_isolated_atoms=keep_isolated_atoms,
             head_name=head_name,
             no_data_ok=no_data_ok,
         )
         all_train_configs.extend(train_configs)
 
-        # Track atomic energies from each file for averaging
+                                                            
         if ae_dict:
             for element, energy in ae_dict.items():
                 if element not in atomic_energies_values:
@@ -126,10 +175,10 @@ def get_dataset_from_xyz(
 
         log_dataset_contents(train_configs, f"Training set {i+1}/{len(train_paths)}")
 
-    # Log total training set info
+                                 
     log_dataset_contents(all_train_configs, "Total Training set")
 
-    # Process validation files if provided
+                                          
     if valid_paths:
         for i, path in enumerate(valid_paths):
             _, valid_configs = data.load_from_xyz(
@@ -144,12 +193,12 @@ def get_dataset_from_xyz(
                 valid_configs, f"Validation set {i+1}/{len(valid_paths)}"
             )
 
-        # Log total validation set info
+                                       
         log_dataset_contents(all_valid_configs, "Total Validation set")
         train_configs = all_train_configs
         valid_configs = all_valid_configs
     else:
-        # Split training data if no validation files are provided
+                                                                 
         logging.info("No validation set provided, splitting training data instead.")
         train_configs, valid_configs = data.random_train_valid_split(
             all_train_configs, valid_fraction, seed, work_dir, prefix
@@ -171,7 +220,7 @@ def get_dataset_from_xyz(
 
             log_dataset_contents(test_configs, f"Test set {i+1}/{len(test_paths)}")
 
-        # Create list of tuples (config_type, list(Atoms))
+                                                          
         test_configs_by_type = data.test_config_types(all_test_configs)
         log_dataset_contents(all_test_configs, "Total Test set")
 
@@ -180,12 +229,14 @@ def get_dataset_from_xyz(
         if atomic_energies_counts[element] > 1:
             atomic_energies_dict[element] = sum(values) / len(values)
             logging.debug(
-                f"Element {element} found in {atomic_energies_counts[element]} files. Using average E0: {atomic_energies_dict[element]:.6f} eV"
+                f"Element {element} found in {atomic_energies_counts[element]} files. "
+                f"Using average E0: {atomic_energies_dict[element]:.6f} eV"
             )
         else:
             atomic_energies_dict[element] = values[0]
             logging.debug(
-                f"Element {element} found in 1 file. Using E0: {atomic_energies_dict[element]:.6f} eV"
+                f"Element {element} found in 1 file. "
+                f"Using E0: {atomic_energies_dict[element]:.6f} eV"
             )
 
     return (
@@ -203,7 +254,7 @@ def get_config_type_weights(ct_weights):
     try:
         config_type_weights = ast.literal_eval(ct_weights)
         assert isinstance(config_type_weights, dict)
-    except Exception as e:  # pylint: disable=W0703
+    except Exception as e:                         
         logging.warning(
             f"Config type weights not specified correctly ({e}), using Default"
         )
@@ -219,9 +270,26 @@ def print_git_commit():
         commit = repo.head.commit.hexsha
         logging.debug(f"Current Git commit: {commit}")
         return commit
-    except Exception as e:  # pylint: disable=W0703
+    except Exception as e:                         
         logging.debug(f"Error accessing Git repository: {e}")
         return "None"
+
+
+def extract_radial_MLP(model: torch.nn.Module) -> List[int]:
+    try:
+        return model.interactions[0].conv_tp_weights.hs[1:-1]
+    except AttributeError:
+        try:
+            return [
+                int(
+                    model.interactions[0]
+                    .conv_tp_weights.net[k]
+                    .__dict__["normalized_shape"][0]
+                )
+                for k in range(1, len(model.interactions[0].conv_tp_weights.net), 3)
+            ]
+        except AttributeError:
+            return []
 
 
 def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
@@ -260,11 +328,39 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         )
     except AttributeError:
         correlation = model.products[0].symmetric_contractions.contraction_degree
+
     config = {
         "r_max": model.r_max.item(),
         "num_bessel": len(model.radial_embedding.bessel_fn.bessel_weights),
-        "num_polynomial_cutoff": model.radial_embedding.cutoff_fn.p.item(),
-        "max_ell": model.spherical_harmonics._lmax,  # pylint: disable=protected-access
+
+                                                            
+        "cutoff_kind": (
+            model.radial_embedding.cutoff_kind
+            if hasattr(model.radial_embedding, "cutoff_kind")
+            else "polynomial"
+        ),
+                                                                       
+        "num_polynomial_cutoff": (
+            int(model.radial_embedding.cutoff_fn.p.item())
+            if hasattr(model.radial_embedding, "cutoff_fn")
+            and hasattr(model.radial_embedding.cutoff_fn, "p")
+            else None
+        ),
+        "cutoff_env_n": (
+            int(model.radial_embedding.cutoff_fn.n.item())
+            if hasattr(model.radial_embedding, "cutoff_fn")
+            and hasattr(model.radial_embedding.cutoff_fn, "n")
+            else None
+        ),
+        "cutoff_env_eps": (
+            float(model.radial_embedding.cutoff_fn.eps.item())
+            if hasattr(model.radial_embedding, "cutoff_fn")
+            and hasattr(model.radial_embedding.cutoff_fn, "eps")
+            else None
+        ),
+                                                         
+
+        "max_ell": model.spherical_harmonics._lmax,                                    
         "interaction_cls": model.interactions[-1].__class__,
         "interaction_cls_first": model.interactions[0].__class__,
         "num_interactions": model.num_interactions.item(),
@@ -277,7 +373,7 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
             else 1
         ),
         "gate": (
-            model.readouts[-1]  # pylint: disable=protected-access
+            model.readouts[-1]                                    
             .non_linearity._modules["acts"][0]
             .f
             if model.num_interactions.item() > 1
@@ -323,10 +419,12 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         "atomic_inter_shift": shift.cpu().numpy(),
         "heads": heads,
     }
+
     if model.__class__.__name__ == "AtomicDielectricMACE":
         config["use_polarizability"] = model.use_polarizability
-        config["only_dipole"] = False  # model.only_dipole
+        config["only_dipole"] = False                     
         config["gate"] = torch.nn.functional.silu
+
     return config
 
 
@@ -336,44 +434,16 @@ def extract_load(f: str, map_location: str = "cpu") -> torch.nn.Module:
     )
 
 
-def extract_radial_MLP(model: torch.nn.Module) -> List[int]:
-    try:
-        return model.interactions[0].conv_tp_weights.hs[1:-1]
-    except AttributeError:
-        try:
-            return [
-                int(
-                    model.interactions[0]
-                    .conv_tp_weights.net[k]
-                    .__dict__["normalized_shape"][0]
-                )
-                for k in range(1, len(model.interactions[0].conv_tp_weights.net), 3)
-            ]
-        except AttributeError:
-            return []
-
-
 def remove_pt_head(
     model: torch.nn.Module, head_to_keep: Optional[str] = None
 ) -> torch.nn.Module:
-    """Converts a multihead MACE model to a single head model by removing the pretraining head.
-
-    Args:
-        model (ScaleShiftMACE): The multihead MACE model to convert
-        head_to_keep (Optional[str]): The name of the head to keep. If None, keeps the first non-PT head.
-
-    Returns:
-        ScaleShiftMACE: A new MACE model with only the specified head
-
-    Raises:
-        ValueError: If the model is not a multihead model or if the specified head is not found
-    """
+    """Converts a multihead MACE model to a single head model by removing the pretraining head."""
     if not hasattr(model, "heads") or len(model.heads) <= 1:
         raise ValueError("Model must be a multihead model with more than one head")
 
-    # Get index of head to keep
+                               
     if head_to_keep is None:
-        # Find first non-PT head
+                                
         try:
             head_idx = next(i for i, h in enumerate(model.heads) if h != "pt_head")
         except StopIteration as e:
@@ -384,7 +454,7 @@ def remove_pt_head(
         except ValueError as e:
             raise ValueError(f"Head {head_to_keep} not found in model") from e
 
-    # Extract config and modify for single head
+                                               
     model_config = extract_config_mace_model(model)
     model_config["heads"] = [model.heads[head_idx]]
     model_config["atomic_energies"] = (
@@ -460,9 +530,8 @@ def remove_pt_head(
         else:
             new_state_dict[name] = param
 
-    # Load state dict into new model
+                                    
     new_model.load_state_dict(new_state_dict, strict=False)
-
     return new_model
 
 
@@ -476,7 +545,6 @@ def convert_to_json_format(dict_input):
     for key, value in dict_input.items():
         if isinstance(value, (np.ndarray, torch.Tensor)):
             dict_input[key] = value.tolist()
-        # # check if the value is a class and convert it to a string
         elif hasattr(value, "__class__"):
             dict_input[key] = str(value)
     return dict_input
@@ -484,6 +552,7 @@ def convert_to_json_format(dict_input):
 
 def convert_from_json_format(dict_input):
     dict_output = dict_input.copy()
+
     if (
         dict_input["interaction_cls"]
         == "<class 'mace.modules.blocks.RealAgnosticResidualInteractionBlock'>"
@@ -510,9 +579,24 @@ def convert_from_json_format(dict_input):
         dict_output["interaction_cls_first"] = (
             modules.blocks.RealAgnosticInteractionBlock
         )
+
     dict_output["r_max"] = float(dict_input["r_max"])
     dict_output["num_bessel"] = int(dict_input["num_bessel"])
-    dict_output["num_polynomial_cutoff"] = float(dict_input["num_polynomial_cutoff"])
+
+                                                                
+    dict_output["cutoff_kind"] = dict_input.get("cutoff_kind", "polynomial")
+
+                                                                        
+    npc = dict_input.get("num_polynomial_cutoff", None)
+    dict_output["num_polynomial_cutoff"] = int(npc) if npc is not None else 6
+
+    cen = dict_input.get("cutoff_env_n", None)
+    dict_output["cutoff_env_n"] = int(cen) if cen is not None else 1
+
+    cee = dict_input.get("cutoff_env_eps", None)
+    dict_output["cutoff_env_eps"] = float(cee) if cee is not None else 1e-3
+                                                              
+
     dict_output["max_ell"] = int(dict_input["max_ell"])
     dict_output["num_interactions"] = int(dict_input["num_interactions"])
     dict_output["num_elements"] = int(dict_input["num_elements"])
@@ -532,18 +616,18 @@ def convert_from_json_format(dict_input):
 
     return dict_output
 
-
 def load_from_json(f: str, map_location: str = "cpu") -> torch.nn.Module:
     extra_files_extract = {"commit.txt": None, "config.json": None}
     model_jit_load = torch.jit.load(
         f, _extra_files=extra_files_extract, map_location=map_location
     )
-    model_load_yaml = modules.ScaleShiftMACE(
-        **convert_from_json_format(json.loads(extra_files_extract["config.json"]))
-    )
+
+    cfg = convert_from_json_format(json.loads(extra_files_extract["config.json"]))
+    cfg = _inject_cutoff_into_model_config(cfg)  # ✅ env overrides win
+
+    model_load_yaml = modules.ScaleShiftMACE(**cfg)
     model_load_yaml.load_state_dict(model_jit_load.state_dict())
     return model_load_yaml.to(map_location)
-
 
 def get_atomic_energies(E0s, train_collection, z_table) -> dict:
     if E0s is not None:
@@ -551,10 +635,7 @@ def get_atomic_energies(E0s, train_collection, z_table) -> dict:
             "Isolated Atomic Energies (E0s) not in training file, using command line argument"
         )
         if E0s.lower() == "average":
-            logging.info(
-                "Computing average Atomic Energies using least squares regression"
-            )
-            # catch if colections.train not defined above
+            logging.info("Computing average Atomic Energies using least squares regression")
             try:
                 assert train_collection is not None
                 atomic_energies_dict = data.compute_average_E0s(
@@ -575,13 +656,7 @@ def get_atomic_energies(E0s, train_collection, z_table) -> dict:
             else:
                 try:
                     atomic_energies_eval = ast.literal_eval(E0s)
-                    if not all(
-                        isinstance(value, dict)
-                        for value in atomic_energies_eval.values()
-                    ):
-                        atomic_energies_dict = atomic_energies_eval
-                    else:
-                        atomic_energies_dict = atomic_energies_eval
+                    atomic_energies_dict = atomic_energies_eval
                     assert isinstance(atomic_energies_dict, dict)
                 except Exception as e:
                     raise RuntimeError(
@@ -617,6 +692,7 @@ def get_avg_num_neighbors(head_configs, args, train_loader, device):
             for head_config in head_configs
             if head_config.avg_num_neighbors is not None
         )
+
     if avg_num_neighbors_out < 2 or avg_num_neighbors_out > 100:
         logging.warning(
             f"Unusual average number of neighbors: {avg_num_neighbors_out:.1f}"
@@ -669,12 +745,8 @@ def get_loss_fn(
             forces_weight=args.forces_weight,
         )
     elif args.loss == "dipole":
-        assert (
-            dipole_only is True
-        ), "dipole loss can only be used with AtomicDipolesMACE model"
-        loss_fn = modules.DipoleSingleLoss(
-            dipole_weight=args.dipole_weight,
-        )
+        assert dipole_only is True, "dipole loss can only be used with AtomicDipolesMACE model"
+        loss_fn = modules.DipoleSingleLoss(dipole_weight=args.dipole_weight)
     elif args.loss == "dipole_polar":
         loss_fn = modules.DipolePolarLoss(
             dipole_weight=args.dipole_weight,
@@ -718,7 +790,9 @@ def get_swa(
             virials_weight=args.swa_virials_weight,
         )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight},  virials_weight: {args.swa_virials_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, "
+            f"energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, "
+            f"virials_weight: {args.swa_virials_weight} and learning rate : {args.swa_lr}"
         )
     elif args.loss == "stress":
         loss_fn_energy = modules.WeightedEnergyForcesStressLoss(
@@ -727,7 +801,9 @@ def get_swa(
             stress_weight=args.swa_stress_weight,
         )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, "
+            f"energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, "
+            f"stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
         )
     elif args.loss == "dipole_polar":
         loss_fn_energy = modules.DipolePolarLoss(
@@ -735,7 +811,9 @@ def get_swa(
             polarizability_weight=args.swa_polarizability_weight,
         )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, dipole weight : {args.swa_dipole_weight}, polarizability weight : {args.swa_polarizability_weight}, and learning rate : {args.swa_lr}"
+            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, "
+            f"dipole weight : {args.swa_dipole_weight}, polarizability weight : {args.swa_polarizability_weight}, "
+            f"and learning rate : {args.swa_lr}"
         )
     elif args.loss == "energy_forces_dipole":
         loss_fn_energy = modules.WeightedEnergyForcesDipoleLoss(
@@ -744,7 +822,9 @@ def get_swa(
             dipole_weight=args.swa_dipole_weight,
         )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, dipole weight : {args.swa_dipole_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, "
+            f"energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, "
+            f"dipole weight : {args.swa_dipole_weight} and learning rate : {args.swa_lr}"
         )
     elif args.loss == "universal":
         loss_fn_energy = modules.UniversalLoss(
@@ -754,7 +834,9 @@ def get_swa(
             huber_delta=args.huber_delta,
         )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, "
+            f"energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, "
+            f"stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
         )
     else:
         loss_fn_energy = modules.WeightedEnergyForcesLoss(
@@ -762,8 +844,11 @@ def get_swa(
             forces_weight=args.swa_forces_weight,
         )
         logging.info(
-            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight} and learning rate : {args.swa_lr}"
+            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, "
+            f"energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight} "
+            f"and learning rate : {args.swa_lr}"
         )
+
     swa = SWAContainer(
         model=AveragedModel(model),
         scheduler=SWALR(
@@ -851,6 +936,7 @@ def get_params_options(
         amsgrad=args.amsgrad,
         betas=(args.beta, 0.999),
     )
+
     if hasattr(model, "joint_embedding") and model.joint_embedding is not None:
         param_options["params"].append(
             {
@@ -888,7 +974,8 @@ def get_optimizer(
             from schedulefree import adamw_schedulefree
         except ImportError as exc:
             raise ImportError(
-                "`schedulefree` is not installed. Please install it via `pip install schedulefree` or `pip install mace-torch[schedulefree]`"
+                "`schedulefree` is not installed. Please install it via "
+                "`pip install schedulefree` or `pip install mace-torch[schedulefree]`"
             ) from exc
         _param_options = {k: v for k, v in param_options.items() if k != "amsgrad"}
         _param_options.pop("betas", None)
@@ -941,11 +1028,13 @@ def dict_to_array(input_data, heads):
         return np.array([input_data[head] for head in heads])
     if not all(isinstance(value, dict) for value in input_data.values()):
         return np.array([[input_data[head]] for head in heads])
+
     unique_keys = set()
     for inner_dict in input_data.values():
         unique_keys.update(inner_dict.keys())
     unique_keys = list(unique_keys)
     sorted_keys = sorted([int(key) for key in unique_keys])
+
     result_array = np.zeros((len(input_data), len(sorted_keys)))
     for _, (head_name, inner_dict) in enumerate(input_data.items()):
         for key, value in inner_dict.items():
@@ -958,9 +1047,8 @@ def dict_to_array(input_data, heads):
 class LRScheduler:
     def __init__(self, optimizer, args) -> None:
         self.scheduler = args.scheduler
-        self._optimizer_type = (
-            args.optimizer
-        )  # Schedulefree does not need an optimizer but checkpoint handler does.
+        self._optimizer_type = args.optimizer                                        
+
         if args.scheduler == "ExponentialLR":
             self.lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
                 optimizer=optimizer, gamma=args.lr_scheduler_gamma
@@ -974,15 +1062,13 @@ class LRScheduler:
         else:
             raise RuntimeError(f"Unknown scheduler: '{args.scheduler}'")
 
-    def step(self, metrics=None, epoch=None):  # pylint: disable=E1123
+    def step(self, metrics=None, epoch=None):                         
         if self._optimizer_type == "schedulefree":
-            return  # In principle, schedulefree optimizer can be used with a scheduler but the paper suggests it's not necessary
+            return
         if self.scheduler == "ExponentialLR":
             self.lr_scheduler.step(epoch=epoch)
         elif self.scheduler == "ReduceLROnPlateau":
-            self.lr_scheduler.step(  # pylint: disable=E1123
-                metrics=metrics, epoch=epoch
-            )
+            self.lr_scheduler.step(metrics=metrics, epoch=epoch)                         
 
     def __getattr__(self, name):
         if name == "step":
@@ -1017,7 +1103,6 @@ def check_path_ase_read(filename: Optional[str]) -> bool:
             + num_mdb_files
             == 0
         ):
-            # print all the files in the directory extension in the directory for debugging
             for file in os.listdir(filepath):
                 print(file)
             raise RuntimeError(f"No supported files found in directory '{filename}'")
@@ -1028,7 +1113,6 @@ def check_path_ase_read(filename: Optional[str]) -> bool:
 
 
 def dict_to_namespace(dictionary):
-    # Convert the dictionary into an argparse.Namespace
     namespace = argparse.Namespace()
     for key, value in dictionary.items():
         setattr(namespace, key, value)

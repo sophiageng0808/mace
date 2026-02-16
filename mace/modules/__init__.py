@@ -42,7 +42,16 @@ from .models import (
     EnergyDipolesMACE,
     ScaleShiftMACE,
 )
-from .radial import BesselBasis, GaussianBasis, PolynomialCutoff, ZBLBasis
+from .radial import (
+    BesselBasis,
+    GaussianBasis,
+    PolynomialCutoff,
+    CosineCutoff,
+    PolyOverRnEnvelopeCutoff,
+    make_cutoff_fn,
+    ZBLBasis,
+)
+
 from .symmetric_contraction import SymmetricContraction
 from .utils import (
     compute_avg_num_neighbors,
@@ -124,4 +133,7 @@ __all__ = [
     "compute_fixed_charge_dipole",
     "compute_fixed_charge_dipole_polar",
     "compute_dielectric_gradients",
+    "CosineCutoff",
+    "PolyOverRnEnvelopeCutoff",
+    "make_cutoff_fn",
 ]

@@ -2,7 +2,7 @@
 # Parsing functionalities
 # Authors: Ilyes Batatia, Gregor Simm, David Kovacs
 # This program is distributed under the MIT License (see MIT.md)
-###########################################################################################
+###########################################################################################                                                                                          
 
 import argparse
 import os
@@ -30,11 +30,11 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         )
 
-    # Name and seed
+                   
     parser.add_argument("--name", help="experiment name", required=True)
     parser.add_argument("--seed", help="random seed", type=int, default=123)
 
-    # Directories
+                 
     parser.add_argument(
         "--work_dir",
         help="set directory for all files and folders",
@@ -60,7 +60,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--downloads_dir", help="directory for downloads", type=str, default=None
     )
 
-    # Device and logging
+                        
     parser.add_argument(
         "--device",
         help="select device",
@@ -129,7 +129,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="PerAtomRMSE",
     )
 
-    # Model
+           
     parser.add_argument(
         "--model",
         help="model type",
@@ -166,12 +166,37 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=8,
     )
+
+                                  
+                                 
+                                  
+    parser.add_argument(
+        "--cutoff_kind",
+        help="Which cutoff function to use inside RadialEmbeddingBlock",
+        type=str,
+        default="polynomial",
+        choices=["polynomial", "cosine"],
+    )
     parser.add_argument(
         "--num_cutoff_basis",
-        help="number of basis functions for smooth cutoff",
+        help="Polynomial cutoff 'p' (degree/order). Used only when cutoff_kind=polynomial.",
         type=int,
         default=5,
     )
+    parser.add_argument(
+        "--cutoff_env_n",
+        help="Cosine envelope sharpness parameter n. Used only when cutoff_kind=cosine.",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
+        "--cutoff_env_eps",
+        help="Cosine envelope epsilon (small positive). Used only when cutoff_kind=cosine.",
+        type=float,
+        default=1e-3,
+    )
+                                  
+
     parser.add_argument(
         "--pair_repulsion",
         help="use pair repulsion term with ZBL potential",
@@ -280,7 +305,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
     )
-    # add option to specify irreps by channel number and max L
+                                                              
     parser.add_argument(
         "--num_channels",
         help="number of embedding channels",
@@ -344,7 +369,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=False,
     )
 
-    # Dataset
+             
     parser.add_argument(
         "--train_file",
         help="Training set file, format is .xyz or .h5",
@@ -439,7 +464,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         required=False,
     )
 
-    # Fine-tuning
+                 
     parser.add_argument(
         "--pseudolabel_replay",
         help="Use pseudolabels from foundation model for replay data in multihead finetuning",
@@ -564,7 +589,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=1.0,
     )
 
-    # Keys
+          
     parser.add_argument(
         "--energy_key",
         help="Key of reference energies in training xyz",
@@ -661,7 +686,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="pt_head",
     )
 
-    # Loss and optimization
+                           
     parser.add_argument(
         "--loss",
         help="type of loss",
@@ -937,7 +962,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
     )
-    # option for cuequivariance acceleration
+                                            
     parser.add_argument(
         "--enable_cueq",
         help="Enable cuequivariance acceleration",
@@ -950,15 +975,14 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=str2bool,
         default=False,
     )
-    # option for openequivariance acceleration
+                                              
     parser.add_argument(
         "--enable_oeq",
         help="Enable openequivariance acceleration",
         type=str2bool,
         default=False,
     )
-    # options for using Weights and Biases for experiment tracking
-    # to install see https://wandb.ai
+                                                                  
     parser.add_argument(
         "--wandb",
         help="Use Weights and Biases for experiment tracking",
@@ -1083,6 +1107,34 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default='{"Default":1.0}',
     )
+
+                                                      
+    parser.add_argument(
+        "--cutoff_kind",
+        help="Which cutoff function to use inside RadialEmbeddingBlock",
+        type=str,
+        default="polynomial",
+        choices=["polynomial", "cosine"],
+    )
+    parser.add_argument(
+        "--num_cutoff_basis",
+        help="Polynomial cutoff 'p' (degree/order). Used only when cutoff_kind=polynomial.",
+        type=int,
+        default=5,
+    )
+    parser.add_argument(
+        "--cutoff_env_n",
+        help="Cosine envelope sharpness parameter n. Used only when cutoff_kind=cosine.",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
+        "--cutoff_env_eps",
+        help="Cosine envelope epsilon (small positive). Used only when cutoff_kind=cosine.",
+        type=float,
+        default=1e-3,
+    )
+
     parser.add_argument(
         "--energy_key",
         help="Key of reference energies in training xyz",
@@ -1210,7 +1262,6 @@ def str2bool(value):
 
 def read_yaml(value: str) -> Dict:
     from pathlib import Path
-
     import yaml
 
     if not Path(value).is_file():

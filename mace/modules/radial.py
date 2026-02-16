@@ -2,7 +2,7 @@
 # Radial basis and cutoff
 # Authors: Ilyes Batatia, Gregor Simm
 # This program is distributed under the MIT License (see MIT.md)
-###########################################################################################
+###########################################################################################                                                                                          
 
 import logging
 import os
@@ -36,8 +36,8 @@ class BesselBasis(torch.nn.Module):
         r_max: float,
         num_basis: int = 8,
         trainable: bool = False,
-        use_cosine: bool = False,   
-        radial_mode: str = "sine",    
+        use_cosine: bool = False,
+        radial_mode: str = "sine",
         eps: float = 1e-8,
         **kwargs,
     ):
@@ -54,7 +54,7 @@ class BesselBasis(torch.nn.Module):
             else:
                 mode = "cosm1_over_r" if bool(use_cosine) else "sine"
 
-        # canonicalize aliases
+                              
         if mode in ("sin", "sine"):
             mode = "sine"
         elif mode in ("cos_over_r", "cosoverr", "cos/r"):
@@ -66,7 +66,7 @@ class BesselBasis(torch.nn.Module):
         else:
             raise ValueError(f"Unknown BesselBasis mode: {mode}")
 
-        # store as int buffer for TorchScript-safe branching in forward()
+                                                                         
         mode_map = {"sine": 0, "cos_over_r": 1, "cosm1_over_r": 2, "cos": 3}
         self.register_buffer("mode_id", torch.tensor(mode_map[mode], dtype=torch.int64))
 
@@ -86,32 +86,34 @@ class BesselBasis(torch.nn.Module):
                 dtype=torch.get_default_dtype(),
             )
 
-
         if trainable:
             self.bessel_weights = torch.nn.Parameter(bessel_weights)
         else:
             self.register_buffer("bessel_weights", bessel_weights)
 
         self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
-        self.register_buffer("prefactor", torch.tensor(np.sqrt(2.0 / r_max), dtype=torch.get_default_dtype()))
+        self.register_buffer(
+            "prefactor",
+            torch.tensor(np.sqrt(2.0 / r_max), dtype=torch.get_default_dtype()),
+        )
         self.register_buffer("eps", torch.tensor(float(eps), dtype=torch.get_default_dtype()))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() == 1:
             x = x.unsqueeze(-1)
 
-        # avoid 1/0 singularities in /r modes
+                                             
         x_safe = torch.clamp(x, min=self.eps)
         arg = x_safe * self.bessel_weights
 
         mid = int(self.mode_id.item())
-        if mid == 0:  # sine
+        if mid == 0:        
             out = torch.sin(arg) / x_safe
-        elif mid == 1:  # cos_over_r
+        elif mid == 1:              
             out = torch.cos(arg) / x_safe
-        elif mid == 2:  # (cos-1)/r
+        elif mid == 2:             
             out = (torch.cos(arg) - 1.0) / x_safe
-        else:  # mid == 3, cos
+        else:                 
             out = torch.cos(arg)
 
         return self.prefactor * out
@@ -138,7 +140,7 @@ class ChebychevBasis(torch.nn.Module):
         self.num_basis = num_basis
         self.r_max = r_max
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., 1]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:            
         x = x.repeat(1, self.num_basis)
         n = self.n.repeat(len(x), 1)
         return torch.special.chebyshev_polynomial_t(x, n)
@@ -159,12 +161,14 @@ class GaussianBasis(torch.nn.Module):
             start=0.0, end=r_max, steps=num_basis, dtype=torch.get_default_dtype()
         )
         if trainable:
-            self.gaussian_weights = torch.nn.Parameter(gaussian_weights, requires_grad=True)
+            self.gaussian_weights = torch.nn.Parameter(
+                gaussian_weights, requires_grad=True
+            )
         else:
             self.register_buffer("gaussian_weights", gaussian_weights)
         self.coeff = -0.5 / (r_max / (num_basis - 1)) ** 2
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., 1]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:            
         x = x - self.gaussian_weights
         return torch.exp(self.coeff * torch.pow(x, 2))
 
@@ -181,13 +185,17 @@ class PolynomialCutoff(torch.nn.Module):
     def __init__(self, r_max: float, p: int = 6):
         super().__init__()
         self.register_buffer("p", torch.tensor(p, dtype=torch.int))
-        self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
+        self.register_buffer(
+            "r_max", torch.tensor(r_max, dtype=torch.get_default_dtype())
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.calculate_envelope(x, self.r_max, self.p.to(torch.int))
 
     @staticmethod
-    def calculate_envelope(x: torch.Tensor, r_max: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
+    def calculate_envelope(
+        x: torch.Tensor, r_max: torch.Tensor, p: torch.Tensor
+    ) -> torch.Tensor:
         r_over_r_max = x / r_max
         envelope = (
             1.0
@@ -199,6 +207,89 @@ class PolynomialCutoff(torch.nn.Module):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(p={self.p}, r_max={self.r_max})"
+
+
+                                                                                           
+                                                    
+                                                                                           
+
+@compile_mode("script")
+class CosineCutoff(torch.nn.Module):
+    """Behler–Parrinello cosine cutoff:
+    f(r) = 0.5 * (cos(pi*r/r_max) + 1) for r <= r_max else 0
+    """
+    r_max: torch.Tensor
+
+    def __init__(self, r_max: float):
+        super().__init__()
+        self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r_max = self.r_max
+        xr = x / r_max
+        f = 0.5 * (torch.cos(torch.pi * xr) + 1.0)
+        return torch.where(x < r_max, f, torch.zeros_like(x))
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(r_max={self.r_max})"
+
+
+@compile_mode("script")
+class PolyOverRnEnvelopeCutoff(torch.nn.Module):
+    r_max: torch.Tensor
+    p: torch.Tensor
+    n: torch.Tensor
+    eps: torch.Tensor
+
+    """Envelope-style cutoff:
+       f_mod(r) = ((r_max - r)^p) / (r^n) for r <= r_max else 0
+       eps prevents singularity at r=0.
+    """
+
+    def __init__(self, r_max: float, p: int = 6, n: int = 1, eps: float = 1e-3):
+        super().__init__()
+        self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.get_default_dtype()))
+        self.register_buffer("p", torch.tensor(p, dtype=torch.int))
+        self.register_buffer("n", torch.tensor(n, dtype=torch.int))
+        self.register_buffer("eps", torch.tensor(float(eps), dtype=torch.get_default_dtype()))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r_max = self.r_max
+                                
+        dr = torch.clamp(r_max - x, min=0.0)
+                               
+        denom = torch.pow(torch.clamp(x, min=self.eps), self.n.to(torch.int))
+        f = torch.pow(dr, self.p.to(torch.int)) / denom
+        return torch.where(x < r_max, f, torch.zeros_like(x))
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(p={self.p}, n={self.n}, eps={self.eps}, r_max={self.r_max})"
+
+
+def make_cutoff_fn(
+    cutoff_kind: str,
+    r_max: float,
+    p: int,
+    env_n: int = 1,
+    env_eps: float = 1e-3,
+) -> torch.nn.Module:
+    """
+    Factory for cutoff functions used by radial embedding.
+
+    cutoff_kind options (case-insensitive):
+      - "polynomial" or "poly"     -> PolynomialCutoff(r_max, p)
+      - "cosine" or "bp" or "cos"  -> CosineCutoff(r_max)
+      - "poly_over_rn" or "envelope" or "rn"
+                                 -> PolyOverRnEnvelopeCutoff(r_max, p, n=env_n, eps=env_eps)
+    """
+    ck = str(cutoff_kind).strip().lower()
+    if ck in ("polynomial", "poly", "standard"):
+        return PolynomialCutoff(r_max=r_max, p=p)
+    if ck in ("cosine", "bp", "cos"):
+        return CosineCutoff(r_max=r_max)
+    if ck in ("poly_over_rn", "envelope", "rn"):
+        return PolyOverRnEnvelopeCutoff(r_max=r_max, p=p, n=env_n, eps=env_eps)
+    raise ValueError(f"Unknown cutoff_kind={cutoff_kind!r}")
 
 
 @compile_mode("script")

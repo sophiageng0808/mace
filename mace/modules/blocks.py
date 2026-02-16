@@ -34,6 +34,9 @@ from .radial import (
     ChebychevBasis,
     GaussianBasis,
     PolynomialCutoff,
+    CosineCutoff,
+    PolyOverRnEnvelopeCutoff,
+    make_cutoff_fn,
     RadialMLP,
     SoftTransform,
 )
@@ -55,7 +58,7 @@ class LinearNodeEmbeddingBlock(torch.nn.Module):
     def forward(
         self,
         node_attrs: torch.Tensor,
-    ) -> torch.Tensor:  # [n_nodes, irreps]
+    ) -> torch.Tensor:                     
         return self.linear(node_attrs)
 
 
@@ -66,7 +69,7 @@ class LinearReadoutBlock(torch.nn.Module):
         irreps_in: o3.Irreps,
         irrep_out: o3.Irreps = o3.Irreps("0e"),
         cueq_config: Optional[CuEquivarianceConfig] = None,
-        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+        oeq_config: Optional[OEQConfig] = None,                                   
     ):
         super().__init__()
         self.linear = Linear(
@@ -76,9 +79,9 @@ class LinearReadoutBlock(torch.nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        heads: Optional[torch.Tensor] = None,  # pylint: disable=unused-argument
-    ) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
-        return self.linear(x)  # [n_nodes, 1]
+        heads: Optional[torch.Tensor] = None,                                   
+    ) -> torch.Tensor:                                
+        return self.linear(x)                
 
 
 @compile_mode("script")
@@ -91,7 +94,7 @@ class NonLinearReadoutBlock(torch.nn.Module):
         irrep_out: o3.Irreps = o3.Irreps("0e"),
         num_heads: int = 1,
         cueq_config: Optional[CuEquivarianceConfig] = None,
-        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+        oeq_config: Optional[OEQConfig] = None,                                   
     ):
         super().__init__()
         self.hidden_irreps = MLP_irreps
@@ -108,12 +111,12 @@ class NonLinearReadoutBlock(torch.nn.Module):
 
     def forward(
         self, x: torch.Tensor, heads: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
+    ) -> torch.Tensor:                                
         x = self.non_linearity(self.linear_1(x))
         if hasattr(self, "num_heads"):
             if self.num_heads > 1 and heads is not None:
                 x = mask_head(x, heads, self.num_heads)
-        return self.linear_2(x)  # [n_nodes, len(heads)]
+        return self.linear_2(x)                         
 
 
 @simplify_if_compile
@@ -127,7 +130,7 @@ class NonLinearBiasReadoutBlock(torch.nn.Module):
         irrep_out: o3.Irreps = o3.Irreps("0e"),
         num_heads: int = 1,
         cueq_config: Optional[CuEquivarianceConfig] = None,
-        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+        oeq_config: Optional[OEQConfig] = None,                                   
     ):
         super().__init__()
         self.hidden_irreps = MLP_irreps
@@ -145,7 +148,7 @@ class NonLinearBiasReadoutBlock(torch.nn.Module):
 
     def forward(
         self, x: torch.Tensor, heads: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
+    ) -> torch.Tensor:                                
         x = self.non_linearity(self.linear_1(x))
         if hasattr(self, "num_heads"):
             if self.num_heads > 1 and heads is not None:
@@ -154,7 +157,7 @@ class NonLinearBiasReadoutBlock(torch.nn.Module):
         if hasattr(self, "num_heads"):
             if self.num_heads > 1 and heads is not None:
                 x = mask_head(x, heads, self.num_heads)
-        return self.linear_2(x)  # [n_nodes, len(heads)]
+        return self.linear_2(x)                         
 
 
 @compile_mode("script")
@@ -164,7 +167,7 @@ class LinearDipoleReadoutBlock(torch.nn.Module):
         irreps_in: o3.Irreps,
         dipole_only: bool = False,
         cueq_config: Optional[CuEquivarianceConfig] = None,
-        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+        oeq_config: Optional[OEQConfig] = None,                                   
     ):
         super().__init__()
         if dipole_only:
@@ -175,8 +178,8 @@ class LinearDipoleReadoutBlock(torch.nn.Module):
             irreps_in=irreps_in, irreps_out=self.irreps_out, cueq_config=cueq_config
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
-        return self.linear(x)  # [n_nodes, 1]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:                                
+        return self.linear(x)                
 
 
 @compile_mode("script")
@@ -188,7 +191,7 @@ class NonLinearDipoleReadoutBlock(torch.nn.Module):
         gate: Callable,
         dipole_only: bool = False,
         cueq_config: Optional[CuEquivarianceConfig] = None,
-        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+        oeq_config: Optional[OEQConfig] = None,                                   
     ):
         super().__init__()
         self.hidden_irreps = MLP_irreps
@@ -220,9 +223,9 @@ class NonLinearDipoleReadoutBlock(torch.nn.Module):
             cueq_config=cueq_config,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:                                
         x = self.equivariant_nonlin(self.linear_1(x))
-        return self.linear_2(x)  # [n_nodes, 1]
+        return self.linear_2(x)                
 
 
 @compile_mode("script")
@@ -232,7 +235,7 @@ class LinearDipolePolarReadoutBlock(torch.nn.Module):
         irreps_in: o3.Irreps,
         use_polarizability: bool = True,
         cueq_config: Optional[CuEquivarianceConfig] = None,
-        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+        oeq_config: Optional[OEQConfig] = None,                                   
     ):
         super().__init__()
         if use_polarizability:
@@ -249,9 +252,9 @@ class LinearDipolePolarReadoutBlock(torch.nn.Module):
             irreps_in=irreps_in, irreps_out=self.irreps_out, cueq_config=cueq_config
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
-        y = self.linear(x)  # [n_nodes, 1]
-        return y  # [n_nodes, 1]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:                                
+        y = self.linear(x)                
+        return y                
 
 
 @compile_mode("script")
@@ -263,7 +266,7 @@ class NonLinearDipolePolarReadoutBlock(torch.nn.Module):
         gate: Callable,
         use_polarizability: bool = True,
         cueq_config: Optional[CuEquivarianceConfig] = None,
-        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+        oeq_config: Optional[OEQConfig] = None,                                   
     ):
         super().__init__()
         self.hidden_irreps = MLP_irreps
@@ -300,9 +303,9 @@ class NonLinearDipolePolarReadoutBlock(torch.nn.Module):
             cueq_config=cueq_config,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:                                
         x = self.equivariant_nonlin(self.linear_1(x))
-        return self.linear_2(x)  # [n_nodes, 1]
+        return self.linear_2(x)                
 
 
 @compile_mode("script")
@@ -314,9 +317,9 @@ class AtomicEnergiesBlock(torch.nn.Module):
         self.register_buffer(
             "atomic_energies",
             torch.tensor(atomic_energies, dtype=torch.get_default_dtype()),
-        )  # [n_elements, n_heads]
+        )                         
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., ]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:           
         return torch.matmul(x, torch.atleast_2d(self.atomic_energies).T)
 
     def __repr__(self):
@@ -339,25 +342,31 @@ class RadialEmbeddingBlock(torch.nn.Module):
         distance_transform: str = "None",
         apply_cutoff: bool = True,
         bessel_use_cosine: bool = False,
+                                              
+        cutoff_kind: str = "polynomial",
+        cutoff_env_n: int = 1,
+        cutoff_env_eps: float = 1e-3,
     ):
         super().__init__()
 
-        # Store for debugging / repr / sanity checks (TorchScript-safe as buffer)
+                                                                                 
         self.register_buffer(
             "_bessel_use_cosine",
             torch.tensor(1 if bessel_use_cosine else 0, dtype=torch.int8),
         )
-        self.radial_type = radial_type  # plain python str is fine
+        self.radial_type = radial_type                            
 
-        # Log once at init (avoid TorchScript / tracing)
+                                                        
         if not torch.jit.is_scripting() and not torch.jit.is_tracing():
             logging.info(
                 f"RadialEmbeddingBlock(radial_type={radial_type}, "
                 f"num_bessel={num_bessel}, r_max={r_max}, "
                 f"distance_transform={distance_transform}, apply_cutoff={apply_cutoff}, "
-                f"bessel_use_cosine={bessel_use_cosine})"
+                f"bessel_use_cosine={bessel_use_cosine}, "
+                f"cutoff_kind={cutoff_kind}, cutoff_env_n={cutoff_env_n}, cutoff_env_eps={cutoff_env_eps})"
             )
 
+               
         if radial_type == "bessel":
             self.bessel_fn = BesselBasis(
                 r_max=r_max,
@@ -371,6 +380,7 @@ class RadialEmbeddingBlock(torch.nn.Module):
         else:
             raise ValueError(f"Unknown radial_type: {radial_type}")
 
+                                     
         if distance_transform == "Agnesi":
             self.distance_transform = AgnesiTransform()
         elif distance_transform == "Soft":
@@ -380,26 +390,52 @@ class RadialEmbeddingBlock(torch.nn.Module):
         else:
             raise ValueError(f"Unknown distance_transform: {distance_transform}")
 
-        self.cutoff_fn = PolynomialCutoff(r_max=r_max, p=num_polynomial_cutoff)
+                           
+        self.cutoff_kind = cutoff_kind
+        self.cutoff_fn = make_cutoff_fn(
+            cutoff_kind=cutoff_kind,
+            r_max=r_max,
+            p=num_polynomial_cutoff,
+            env_n=cutoff_env_n,
+            env_eps=cutoff_env_eps,
+        )
+
         self.out_dim = num_bessel
         self.apply_cutoff = apply_cutoff
 
     def forward(
         self,
-        edge_lengths: torch.Tensor,  # [n_edges, 1] (or [n_edges])
+        edge_lengths: torch.Tensor,                            
         node_attrs: torch.Tensor,
         edge_index: torch.Tensor,
         atomic_numbers: torch.Tensor,
     ):
-        cutoff = self.cutoff_fn(edge_lengths)  # [n_edges, 1] or [n_edges]
+                                                     
+        if edge_lengths.dim() == 1:
+            edge_lengths = edge_lengths.unsqueeze(-1)                
+
+                                                                       
+        cutoff = self.cutoff_fn(edge_lengths)
+        if cutoff.dim() == 1:
+            cutoff = cutoff.unsqueeze(-1)                
+
+                                                                                      
         if hasattr(self, "distance_transform"):
             edge_lengths = self.distance_transform(
                 edge_lengths, node_attrs, edge_index, atomic_numbers
             )
-        radial = self.bessel_fn(edge_lengths)  # [n_edges, n_basis]
+            if edge_lengths.dim() == 1:
+                edge_lengths = edge_lengths.unsqueeze(-1)
+
+                                   
+        radial = self.bessel_fn(edge_lengths)
+
+                                                                      
         if not self.apply_cutoff:
             return radial, cutoff
-        return radial * cutoff, None
+
+                                                          
+        return radial * cutoff, cutoff
 
 @compile_mode("script")
 class EquivariantProductBasisBlock(torch.nn.Module):
@@ -430,7 +466,7 @@ class EquivariantProductBasisBlock(torch.nn.Module):
             cueq_config=cueq_config,
             oeq_config=oeq_config,
         )
-        # Update linear
+                       
         self.linear = Linear(
             target_irreps,
             target_irreps,
@@ -526,18 +562,18 @@ class InteractionBlock(torch.nn.Module):
         lammps_class: Optional[Any],
         lammps_natoms: Tuple[int, int],
         first_layer: bool,
-    ) -> torch.Tensor:  # noqa: D401 – internal helper
+    ) -> torch.Tensor:                                
         if lammps_class is None or first_layer or torch.jit.is_scripting():
             return node_feats
         node_feats = node_feats.contiguous()
         n_real, n_ghost = lammps_natoms
         expected_total = n_real + n_ghost
-        # If input already includes ghost slots, skip padding but still do exchange.
+                                                                                    
         if node_feats.shape[0] == expected_total:
-            # Input already includes ghost slots, just do exchange
+                                                                  
             node_feats = LAMMPS_MP.apply(node_feats, lammps_class)
             return node_feats
-        # Normal case: pad with zeros for ghosts, then exchange
+                                                               
         pad = torch.zeros(
             (n_ghost, node_feats.shape[1]),
             dtype=node_feats.dtype,
@@ -576,7 +612,7 @@ class RealAgnosticInteractionBlock(InteractionBlock):
         if not hasattr(self, "oeq_config"):
             self.oeq_config = None
 
-        # First linear
+                      
         self.linear_up = Linear(
             self.node_feats_irreps,
             self.edge_irreps,
@@ -584,7 +620,7 @@ class RealAgnosticInteractionBlock(InteractionBlock):
             shared_weights=True,
             cueq_config=self.cueq_config,
         )
-        # TensorProduct
+                       
         irreps_mid, instructions = tp_out_irreps_with_instructions(
             self.edge_irreps,
             self.edge_attrs_irreps,
@@ -601,14 +637,14 @@ class RealAgnosticInteractionBlock(InteractionBlock):
             oeq_config=self.oeq_config,
         )
 
-        # Convolution weights
+                             
         input_dim = self.edge_feats_irreps.num_irreps
         self.conv_tp_weights = nn.FullyConnectedNet(
             [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
             torch.nn.functional.silu,
         )
 
-        # Linear
+                
         self.irreps_out = self.target_irreps
         self.linear = Linear(
             irreps_mid,
@@ -618,7 +654,7 @@ class RealAgnosticInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Selector TensorProduct
+                                
         self.skip_tp = FullyConnectedTensorProduct(
             self.irreps_out,
             self.node_attrs_irreps,
@@ -657,7 +693,7 @@ class RealAgnosticInteractionBlock(InteractionBlock):
         else:
             mji = self.conv_tp(
                 node_feats[edge_index[0]], edge_attrs, tp_weights
-            )  # [n_nodes, irreps]
+            )                     
             message = scatter_sum(
                 src=mji, index=edge_index[1], dim=0, dim_size=node_feats.shape[0]
             )
@@ -668,7 +704,7 @@ class RealAgnosticInteractionBlock(InteractionBlock):
         return (
             self.reshape(message),
             None,
-        )  # [n_nodes, channels, (lmax + 1)**2]
+        )                                      
 
 
 @compile_mode("script")
@@ -679,7 +715,7 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
         if not hasattr(self, "oeq_config"):
             self.oeq_config = None
 
-        # First linear
+                      
         self.linear_up = Linear(
             self.node_feats_irreps,
             self.edge_irreps,
@@ -687,7 +723,7 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
             shared_weights=True,
             cueq_config=self.cueq_config,
         )
-        # TensorProduct
+                       
         irreps_mid, instructions = tp_out_irreps_with_instructions(
             self.edge_irreps,
             self.edge_attrs_irreps,
@@ -704,14 +740,14 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
             oeq_config=self.oeq_config,
         )
 
-        # Convolution weights
+                             
         input_dim = self.edge_feats_irreps.num_irreps
         self.conv_tp_weights = nn.FullyConnectedNet(
             [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
-            torch.nn.functional.silu,  # gate
+            torch.nn.functional.silu,        
         )
 
-        # Linear
+                
         self.irreps_out = self.target_irreps
         self.linear = Linear(
             irreps_mid,
@@ -721,7 +757,7 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Selector TensorProduct
+                                
         self.skip_tp = FullyConnectedTensorProduct(
             self.node_feats_irreps,
             self.node_attrs_irreps,
@@ -760,7 +796,7 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
         else:
             mji = self.conv_tp(
                 node_feats[edge_index[0]], edge_attrs, tp_weights
-            )  # [n_nodes, irreps]
+            )                     
             message = scatter_sum(
                 src=mji, index=edge_index[1], dim=0, dim_size=node_feats.shape[0]
             )
@@ -771,7 +807,7 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
         return (
             self.reshape(message),
             sc,
-        )  # [n_nodes, channels, (lmax + 1)**2]
+        )                                      
 
 
 @compile_mode("script")
@@ -782,7 +818,7 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
         if not hasattr(self, "oeq_config"):
             self.oeq_config = None
 
-        # First linear
+                      
         self.linear_up = Linear(
             self.node_feats_irreps,
             self.edge_irreps,
@@ -790,7 +826,7 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
             shared_weights=True,
             cueq_config=self.cueq_config,
         )
-        # TensorProduct
+                       
         irreps_mid, instructions = tp_out_irreps_with_instructions(
             self.edge_irreps,
             self.edge_attrs_irreps,
@@ -807,14 +843,14 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
             oeq_config=self.oeq_config,
         )
 
-        # Convolution weights
+                             
         input_dim = self.edge_feats_irreps.num_irreps
         self.conv_tp_weights = nn.FullyConnectedNet(
             [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
             torch.nn.functional.silu,
         )
 
-        # Linear
+                
         self.irreps_out = self.target_irreps
         self.linear = Linear(
             irreps_mid,
@@ -824,7 +860,7 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Selector TensorProduct
+                                
         self.skip_tp = FullyConnectedTensorProduct(
             self.irreps_out,
             self.node_attrs_irreps,
@@ -832,7 +868,7 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Density normalization
+                               
         self.density_fn = nn.FullyConnectedNet(
             [input_dim]
             + [
@@ -840,7 +876,7 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
             ],
             torch.nn.functional.silu,
         )
-        # Reshape
+                 
         self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
 
     def forward(
@@ -872,14 +908,14 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
             edge_density = edge_density * cutoff
         density = scatter_sum(
             src=edge_density, index=receiver, dim=0, dim_size=num_nodes
-        )  # [n_nodes, 1]
+        )                
         message = None
         if hasattr(self, "conv_fusion"):
             message = self.conv_tp(node_feats, edge_attrs, tp_weights, edge_index)
         else:
             mji = self.conv_tp(
                 node_feats[edge_index[0]], edge_attrs, tp_weights
-            )  # [n_nodes, irreps]
+            )                     
             message = scatter_sum(
                 src=mji, index=edge_index[1], dim=0, dim_size=node_feats.shape[0]
             )
@@ -892,7 +928,7 @@ class RealAgnosticDensityInteractionBlock(InteractionBlock):
         return (
             self.reshape(message),
             None,
-        )  # [n_nodes, channels, (lmax + 1)**2]
+        )                                      
 
 
 @compile_mode("script")
@@ -903,7 +939,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
         if not hasattr(self, "oeq_config"):
             self.oeq_config = None
 
-        # First linear
+                      
         self.linear_up = Linear(
             self.node_feats_irreps,
             self.edge_irreps,
@@ -911,7 +947,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
             shared_weights=True,
             cueq_config=self.cueq_config,
         )
-        # TensorProduct
+                       
         irreps_mid, instructions = tp_out_irreps_with_instructions(
             self.edge_irreps,
             self.edge_attrs_irreps,
@@ -928,14 +964,14 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
             oeq_config=self.oeq_config,
         )
 
-        # Convolution weights
+                             
         input_dim = self.edge_feats_irreps.num_irreps
         self.conv_tp_weights = nn.FullyConnectedNet(
             [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
-            torch.nn.functional.silu,  # gate
+            torch.nn.functional.silu,        
         )
 
-        # Linear
+                
         self.irreps_out = self.target_irreps
         self.linear = Linear(
             irreps_mid,
@@ -945,7 +981,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Selector TensorProduct
+                                
         self.skip_tp = FullyConnectedTensorProduct(
             self.node_feats_irreps,
             self.node_attrs_irreps,
@@ -953,7 +989,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Density normalization
+                               
         self.density_fn = nn.FullyConnectedNet(
             [input_dim]
             + [
@@ -962,7 +998,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
             torch.nn.functional.silu,
         )
 
-        # Reshape
+                 
         self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
 
     def forward(
@@ -995,7 +1031,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
             edge_density = edge_density * cutoff
         density = scatter_sum(
             src=edge_density, index=receiver, dim=0, dim_size=num_nodes
-        )  # [n_nodes, 1]
+        )                
 
         message = None
         if hasattr(self, "conv_fusion"):
@@ -1003,7 +1039,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
         else:
             mji = self.conv_tp(
                 node_feats[edge_index[0]], edge_attrs, tp_weights
-            )  # [n_nodes, irreps]
+            )                     
             message = scatter_sum(
                 src=mji, index=edge_index[1], dim=0, dim_size=node_feats.shape[0]
             )
@@ -1016,7 +1052,7 @@ class RealAgnosticDensityResidualInteractionBlock(InteractionBlock):
         return (
             self.reshape(message),
             sc,
-        )  # [n_nodes, channels, (lmax + 1)**2]
+        )                                      
 
 
 @compile_mode("script")
@@ -1028,7 +1064,7 @@ class RealAgnosticAttResidualInteractionBlock(InteractionBlock):
             self.oeq_config = None
 
         self.node_feats_down_irreps = o3.Irreps("64x0e")
-        # First linear
+                      
         self.linear_up = Linear(
             self.node_feats_irreps,
             self.edge_irreps,
@@ -1036,7 +1072,7 @@ class RealAgnosticAttResidualInteractionBlock(InteractionBlock):
             shared_weights=True,
             cueq_config=self.cueq_config,
         )
-        # TensorProduct
+                       
         irreps_mid, instructions = tp_out_irreps_with_instructions(
             self.edge_irreps,
             self.edge_attrs_irreps,
@@ -1053,7 +1089,7 @@ class RealAgnosticAttResidualInteractionBlock(InteractionBlock):
             oeq_config=self.oeq_config,
         )
 
-        # Convolution weights
+                             
         self.linear_down = Linear(
             self.node_feats_irreps,
             self.node_feats_down_irreps,
@@ -1070,7 +1106,7 @@ class RealAgnosticAttResidualInteractionBlock(InteractionBlock):
             torch.nn.functional.silu,
         )
 
-        # Linear
+                
         self.irreps_out = self.target_irreps
         self.linear = Linear(
             irreps_mid,
@@ -1082,12 +1118,12 @@ class RealAgnosticAttResidualInteractionBlock(InteractionBlock):
 
         self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
 
-        # Skip connection.
+                          
         self.skip_linear = Linear(
             self.node_feats_irreps, self.hidden_irreps, cueq_config=self.cueq_config
         )
 
-    # pylint: disable=unused-argument
+                                     
     def forward(
         self,
         node_attrs: torch.Tensor,
@@ -1132,7 +1168,7 @@ class RealAgnosticAttResidualInteractionBlock(InteractionBlock):
         else:
             mji = self.conv_tp(
                 node_feats_up[edge_index[0]], edge_attrs, tp_weights
-            )  # [n_edges, irreps]
+            )                     
             message = scatter_sum(
                 src=mji, index=edge_index[1], dim=0, dim_size=node_feats_up.shape[0]
             )
@@ -1142,7 +1178,7 @@ class RealAgnosticAttResidualInteractionBlock(InteractionBlock):
         return (
             self.reshape(message),
             sc,
-        )  # [n_nodes, channels, (lmax + 1)**2]
+        )                                      
 
 
 @compile_mode("script")
@@ -1150,7 +1186,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
     def _setup(self) -> None:
         if not hasattr(self, "cueq_config"):
             self.cueq_config = None
-        # First linear
+                      
         node_scalar_irreps = o3.Irreps(
             [(self.node_feats_irreps.count(o3.Irrep(0, 1)), (0, 1))]
         )
@@ -1178,7 +1214,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
         torch.nn.init.uniform_(self.source_embedding.weight, a=-0.001, b=0.001)
         torch.nn.init.uniform_(self.target_embedding.weight, a=-0.001, b=0.001)
 
-        # TensorProduct
+                       
         irreps_mid, instructions = tp_out_irreps_with_instructions(
             self.edge_irreps,
             self.edge_attrs_irreps,
@@ -1194,7 +1230,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Convolution weights
+                             
         input_dim = self.edge_feats_irreps.num_irreps
         self.conv_tp_weights = RadialMLP(
             [input_dim + 2 * node_scalar_irreps.dim]
@@ -1203,7 +1239,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
         )
         self.irreps_out = self.target_irreps
 
-        # Selector TensorProduct
+                                
         self.skip_tp = Linear(
             self.node_feats_irreps,
             self.hidden_irreps,
@@ -1211,7 +1247,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
         )
         self.reshape = reshape_irreps(self.irreps_out, cueq_config=self.cueq_config)
 
-        # Non-linearity
+                       
         irreps_scalars = o3.Irreps(
             [(mul, ir) for mul, ir in self.irreps_out if ir.l == 0]
         )
@@ -1228,7 +1264,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
         )
         self.irreps_nonlin = self.equivariant_nonlin.irreps_in.simplify()
 
-        # Linear residual
+                         
         self.linear_res = Linear(
             self.edge_irreps,
             self.irreps_nonlin,
@@ -1237,7 +1273,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Linear
+                
         self.linear_1 = Linear(
             irreps_mid,
             self.irreps_nonlin,
@@ -1253,7 +1289,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
             cueq_config=self.cueq_config,
         )
 
-        # Normalizations
+                        
         self.density_fn = RadialMLP(
             [input_dim + 2 * node_scalar_irreps.dim] + [64] + [1],
         )
@@ -1293,7 +1329,7 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
         node_feats_attrs = torch.cat(
             [node_feats, node_attrs],
             dim=-1,
-        )  # Concatenate features and attributes to do one LAMMPS exchange
+        )                                                                 
         node_feats_attrs = self.handle_lammps(
             node_feats_attrs,
             lammps_class=lammps_class,
@@ -1327,10 +1363,10 @@ class RealAgnosticResidualNonLinearInteractionBlock(InteractionBlock):
         else:
             mji = self.conv_tp(
                 node_feats[edge_index[0]], edge_attrs, tp_weights
-            )  # [n_edges, irreps]
+            )                     
             message = scatter_sum(
                 src=mji, index=edge_index[1], dim=0, dim_size=num_nodes
-            )  # [n_nodes, irreps]
+            )                     
 
         message = self.truncate_ghosts(message, n_real)
         density = self.truncate_ghosts(density, n_real)
