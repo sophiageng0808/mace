@@ -11,6 +11,43 @@ from mace.tools.scripts_utils import extract_config_mace_model
 from mace.tools.utils import AtomicNumberTable
 
 
+def _get_repulsion_kwargs(args):
+    """
+    Gather repulsion kwargs (works even if running older configs).
+    Returns a dict suitable for **kwargs into ScaleShiftMACE / MACELES.
+
+    IMPORTANT:
+    - r12_cutoff is allowed to be None (meaning: no extra cutoff beyond any built-in switch),
+      so we must NOT float(None).
+    """
+    pair_repulsion = bool(getattr(args, "pair_repulsion", False))
+    if not pair_repulsion:
+        return {}  # don't pass anything
+
+    kinds = getattr(args, "pair_repulsion_kinds", None)
+    if kinds is None:
+        kinds = ["zbl"]
+    elif isinstance(kinds, str):
+        # allow "zbl,r12" in yaml/cli
+        kinds = [k.strip() for k in kinds.split(",") if k.strip()]
+
+    # Handle optional cutoff safely (can be None)
+    r12_cutoff = getattr(args, "r12_cutoff", None)
+    if r12_cutoff is not None:
+        r12_cutoff = float(r12_cutoff)
+
+    rep_kwargs = dict(
+        pair_repulsion=True,
+        pair_repulsion_kinds=kinds,
+        zbl_p=int(getattr(args, "zbl_p", 6)),
+        r12_scale=float(getattr(args, "r12_scale", 1.0)),
+        r12_cutoff=r12_cutoff,  # can be None
+        r12_switch_width=getattr(args, "r12_switch_width", None),
+        pair_repulsion_mode=int(getattr(args, "pair_repulsion_mode", 0)),
+        pair_repulsion_r_min=float(getattr(args, "pair_repulsion_r_min", 0.0)),
+    )
+    return rep_kwargs
+
 def configure_model(
     args,
     train_loader,
@@ -40,7 +77,8 @@ def configure_model(
         "polarizabilities": args.compute_polarizability,
     }
     logging.info(
-        f"During training the following quantities will be reported: {', '.join([f'{report}' for report, value in output_args.items() if value])}"
+        f"During training the following quantities will be reported: "
+        f"{', '.join([f'{report}' for report, value in output_args.items() if value])}"
     )
     logging.info("===========MODEL DETAILS===========")
 
@@ -72,9 +110,11 @@ def configure_model(
         args.mean, args.std = modules.scaling_classes[args.scaling](
             train_loader, atomic_energies
         )
+
     if args.embedding_specs is not None:
         logging.info("Using embedding specifications from command line arguments")
         logging.info(f"Embedding specifications: {args.embedding_specs}")
+
     # Build model
     if model_foundation is not None and args.model in [
         "MACE",
@@ -111,12 +151,18 @@ def configure_model(
             )
         else:
             model_config_foundation["atomic_inter_shift"] = [0.0] * len(heads)
+
         model_config_foundation["atomic_inter_scale"] = [1.0] * len(heads)
         args.avg_num_neighbors = model_config_foundation["avg_num_neighbors"]
         args.model = (
             "FoundationMACELES" if args.model == "MACELES" else "FoundationMACE"
         )
         model_config_foundation["heads"] = heads
+
+        rep_kwargs = _get_repulsion_kwargs(args)
+        if rep_kwargs:
+            model_config_foundation.update(rep_kwargs)
+
         model_config = model_config_foundation
 
         logging.info("Model configuration extracted from foundation model")
@@ -125,10 +171,13 @@ def configure_model(
             f"Message passing with hidden irreps {model_config_foundation['hidden_irreps']})"
         )
         logging.info(
-            f"{model_config_foundation['num_interactions']} layers, each with correlation order: {model_config_foundation['correlation']} (body order: {model_config_foundation['correlation']+1}) and spherical harmonics up to: l={model_config_foundation['max_ell']}"
+            f"{model_config_foundation['num_interactions']} layers, each with correlation order: "
+            f"{model_config_foundation['correlation']} (body order: {model_config_foundation['correlation']+1}) "
+            f"and spherical harmonics up to: l={model_config_foundation['max_ell']}"
         )
         logging.info(
-            f"Radial cutoff: {model_config_foundation['r_max']} A (total receptive field for each atom: {model_config_foundation['r_max'] * model_config_foundation['num_interactions']} A)"
+            f"Radial cutoff: {model_config_foundation['r_max']} A "
+            f"(total receptive field for each atom: {model_config_foundation['r_max'] * model_config_foundation['num_interactions']} A)"
         )
         logging.info(
             f"Distance transform for radial basis functions: {model_config_foundation['distance_transform']}"
@@ -139,13 +188,15 @@ def configure_model(
             f"Message passing with {args.num_channels} channels and max_L={args.max_L} ({args.hidden_irreps})"
         )
         logging.info(
-            f"{args.num_interactions} layers, each with correlation order: {args.correlation} (body order: {args.correlation+1}) and spherical harmonics up to: l={args.max_ell}"
+            f"{args.num_interactions} layers, each with correlation order: {args.correlation} "
+            f"(body order: {args.correlation+1}) and spherical harmonics up to: l={args.max_ell}"
         )
         logging.info(
             f"{args.num_radial_basis} radial and {args.num_cutoff_basis} basis functions"
         )
         logging.info(
-            f"Radial cutoff: {args.r_max} A (total receptive field for each atom: {args.r_max * args.num_interactions} A)"
+            f"Radial cutoff: {args.r_max} A "
+            f"(total receptive field for each atom: {args.r_max * args.num_interactions} A)"
         )
         logging.info(
             f"Distance transform for radial basis functions: {args.distance_transform}"
@@ -153,7 +204,10 @@ def configure_model(
 
         assert (
             len({irrep.mul for irrep in o3.Irreps(args.hidden_irreps)}) == 1
-        ), "All channels must have the same dimension, use the num_channels and max_L keywords to specify the number of channels and the maximum L"
+        ), (
+            "All channels must have the same dimension, use the num_channels and max_L keywords "
+            "to specify the number of channels and the maximum L"
+        )
 
         logging.info(f"Hidden irreps: {args.hidden_irreps}")
 
@@ -218,9 +272,9 @@ def _determine_atomic_inter_shift(mean, heads):
     return [0.0] * len(heads)
 
 
-def _build_model(
-    args, model_config, model_config_foundation, heads
-):  # pylint: disable=too-many-return-statements
+def _build_model(args, model_config, model_config_foundation, heads):
+    rep_kwargs = _get_repulsion_kwargs(args)
+
     if args.model == "MACE":
         if args.interaction_first not in [
             "RealAgnosticInteractionBlock",
@@ -229,7 +283,7 @@ def _build_model(
             args.interaction_first = "RealAgnosticInteractionBlock"
         return modules.ScaleShiftMACE(
             **model_config,
-            pair_repulsion=args.pair_repulsion,
+            **rep_kwargs,
             distance_transform=args.distance_transform,
             correlation=args.correlation,
             gate=modules.gate_dict[args.gate],
@@ -245,10 +299,11 @@ def _build_model(
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
         )
+
     if args.model == "ScaleShiftMACE":
         return modules.ScaleShiftMACE(
             **model_config,
-            pair_repulsion=args.pair_repulsion,
+            **rep_kwargs,
             distance_transform=args.distance_transform,
             correlation=args.correlation,
             gate=modules.gate_dict[args.gate],
@@ -264,25 +319,27 @@ def _build_model(
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
         )
+
     if args.model == "FoundationMACE":
         return modules.ScaleShiftMACE(**model_config_foundation)
+
     if args.model == "FoundationMACELES":
         from mace.modules.extensions import MACELES
-
         return MACELES(
             les_arguments=args.les_arguments,
             **model_config_foundation,
         )
+
     if args.model == "ScaleShiftBOTNet":
-        # say it is deprecated
         raise RuntimeError("ScaleShiftBOTNet is deprecated, use MACE instead")
     if args.model == "BOTNet":
         raise RuntimeError("BOTNet is deprecated, use MACE instead")
+
     if args.model == "AtomicDipolesMACE":
         assert args.loss == "dipole", "Use dipole loss with AtomicDipolesMACE model"
-        assert (
-            args.error_table == "DipoleRMSE"
-        ), "Use error_table DipoleRMSE with AtomicDipolesMACE model"
+        assert args.error_table == "DipoleRMSE", (
+            "Use error_table DipoleRMSE with AtomicDipolesMACE model"
+        )
         return modules.AtomicDipolesMACE(
             **model_config,
             correlation=args.correlation,
@@ -295,14 +352,12 @@ def _build_model(
 
     if args.model == "AtomicDielectricMACE":
         args.error_table = "DipolePolarRMSE"
-        # std_df = modules.scaling_classes["rms_dipoles_scaling"](train_loader)
-        assert (
-            args.loss == "dipole_polar"
-        ), "Use dipole_polar loss with AtomicDielectricMACE model"
-        assert args.error_table in (
-            "DipoleRMSE",
-            "DipolePolarRMSE",
-        ), "Use error_table DipoleRMSE with AtomicDielectricMACE model"
+        assert args.loss == "dipole_polar", (
+            "Use dipole_polar loss with AtomicDielectricMACE model"
+        )
+        assert args.error_table in ("DipoleRMSE", "DipolePolarRMSE"), (
+            "Use error_table DipoleRMSE or DipolePolarRMSE with AtomicDielectricMACE model"
+        )
         return modules.AtomicDielectricMACE(
             **model_config,
             correlation=args.correlation,
@@ -315,12 +370,12 @@ def _build_model(
         )
 
     if args.model == "EnergyDipolesMACE":
-        assert (
-            args.loss == "energy_forces_dipole"
-        ), "Use energy_forces_dipole loss with EnergyDipolesMACE model"
-        assert (
-            args.error_table == "EnergyDipoleRMSE"
-        ), "Use error_table EnergyDipoleRMSE with AtomicDipolesMACE model"
+        assert args.loss == "energy_forces_dipole", (
+            "Use energy_forces_dipole loss with EnergyDipolesMACE model"
+        )
+        assert args.error_table == "EnergyDipoleRMSE", (
+            "Use error_table EnergyDipoleRMSE with EnergyDipolesMACE model"
+        )
         return modules.EnergyDipolesMACE(
             **model_config,
             correlation=args.correlation,
@@ -330,13 +385,13 @@ def _build_model(
             ],
             MLP_irreps=o3.Irreps(args.MLP_irreps),
         )
+
     if args.model == "MACELES":
         from mace.modules.extensions import MACELES
-
         return MACELES(
             les_arguments=args.les_arguments,
             **model_config,
-            pair_repulsion=args.pair_repulsion,
+            **rep_kwargs,
             distance_transform=args.distance_transform,
             correlation=args.correlation,
             gate=modules.gate_dict[args.gate],
@@ -352,4 +407,5 @@ def _build_model(
             use_last_readout_only=args.use_last_readout_only,
             use_agnostic_product=args.use_agnostic_product,
         )
+
     raise RuntimeError(f"Unknown model: '{args.model}'")

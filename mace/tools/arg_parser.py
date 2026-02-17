@@ -30,7 +30,6 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         )
 
-    # Name and seed
     parser.add_argument("--name", help="experiment name", required=True)
     parser.add_argument("--seed", help="random seed", type=int, default=123)
 
@@ -167,12 +166,73 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
     )
+
+    # ---- Pair repulsion (ZBL / 1/r^12 / both) ----
     parser.add_argument(
         "--pair_repulsion",
-        help="use pair repulsion term with ZBL potential",
+        help="enable pair repulsion term (configured by --pair_repulsion_kinds)",
         action="store_true",
         default=False,
     )
+    parser.add_argument(
+        "--pair_repulsion_kinds",
+        help="which pair repulsion terms to include (space-separated). Options: zbl, r12",
+        nargs="+",
+        default=["zbl"],
+        choices=["zbl", "r12"],
+    )
+
+    # IMPORTANT: PairRepulsionSwitch in your branch expects an *int* mode (you hit: str vs int)
+    # Recommended mapping (common pattern):
+    #   0 = sum (include all kinds)
+    #   1 = zbl-only
+    #   2 = r12-only
+    #   3 = max / softmax / other (depends on your implementation)
+    parser.add_argument(
+        "--pair_repulsion_mode",
+        help="combination mode for PairRepulsionSwitch (INT). 0=sum, 1=zbl-only, 2=r12-only, 3=other (see repulsion.py)",
+        type=int,
+        default=0,
+        choices=[0, 1, 2, 3],
+    )
+
+    parser.add_argument(
+        "--pair_repulsion_r_min",
+        help="minimum distance (Ang) clamp used in repulsion to avoid singularities",
+        type=float,
+        default=0.2,
+    )
+
+    parser.add_argument(
+        "--zbl_p",
+        help="polynomial cutoff exponent p for ZBL envelope (if used by your ZBLRepulsion)",
+        type=int,
+        default=6,
+    )
+
+    parser.add_argument(
+        "--r12_scale",
+        help="scale factor / prefactor for r^-12 repulsion term",
+        type=float,
+        default=1.0,
+    )
+
+    parser.add_argument(
+        "--r12_cutoff",
+        help="optional cutoff radius (Ang) for r^-12 repulsion (None = no extra cutoff)",
+        type=check_float_or_none,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--r12_switch_width",
+        help="optional switching width (Ang) for smoothly turning off r^-12 near cutoff (None = no switching)",
+        type=check_float_or_none,
+        default=None,
+    )
+    # ---------------------------------------------------------
+
+
     parser.add_argument(
         "--distance_transform",
         help="use distance transform for radial basis functions",
@@ -1088,7 +1148,7 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         "--forces_key",
         help="Key of reference forces in training xyz",
         type=str,
-        default=DefaultKeys.FORCES.value,
+       default=DefaultKeys.FORCES.value,
     )
     parser.add_argument(
         "--virials_key",

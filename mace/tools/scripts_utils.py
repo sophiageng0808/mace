@@ -318,6 +318,9 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         "apply_cutoff": model.apply_cutoff if hasattr(model, "apply_cutoff") else True,
         "radial_MLP": extract_radial_MLP(model),
         "pair_repulsion": hasattr(model, "pair_repulsion_fn"),
+        "pair_repulsion_kinds": getattr(getattr(model, "pair_repulsion_fn", None), "kinds", None),
+        "pair_repulsion_mode": int(getattr(getattr(model, "pair_repulsion_fn", None), "mode", 0))
+            if hasattr(model, "pair_repulsion_fn") else 0,
         "distance_transform": radial_to_transform(model.radial_embedding),
         "atomic_inter_scale": scale.cpu().numpy(),
         "atomic_inter_shift": shift.cpu().numpy(),
