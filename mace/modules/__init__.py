@@ -2,6 +2,16 @@ from typing import Callable, Dict, Optional, Type
 
 import torch
 
+try:
+    from torch.serialization import add_safe_globals
+except Exception:  # pylint: disable=broad-except
+    add_safe_globals = None
+
+if add_safe_globals is not None:
+    # PyTorch 2.6+ defaults to weights_only=True; allowlist slice
+    # for trusted constants files loaded by dependencies (e.g. e3nn).
+    add_safe_globals([slice])
+
 from .blocks import (
     AtomicEnergiesBlock,
     EquivariantProductBasisBlock,
@@ -42,7 +52,17 @@ from .models import (
     EnergyDipolesMACE,
     ScaleShiftMACE,
 )
-from .radial import BesselBasis, GaussianBasis, PolynomialCutoff, ZBLBasis
+
+from .radial import (
+    BesselBasis,
+    ChebychevBasis,
+    GaussianBasis,
+    PolynomialCutoff,
+    RadialMLP,
+    SoftCoreCutoff,
+    ZBLBasis,
+)
+
 from .symmetric_contraction import SymmetricContraction
 from .utils import (
     compute_avg_num_neighbors,
@@ -64,7 +84,7 @@ interaction_classes: Dict[str, Type[InteractionBlock]] = {
     "RealAgnosticResidualNonLinearInteractionBlock": RealAgnosticResidualNonLinearInteractionBlock,
 }
 
-readout_classes: Dict[str, Type[LinearReadoutBlock]] = {
+readout_classes: Dict[str, Type[torch.nn.Module]] = {
     "LinearReadoutBlock": LinearReadoutBlock,
     "LinearDipoleReadoutBlock": LinearDipoleReadoutBlock,
     "NonLinearDipoleReadoutBlock": NonLinearDipoleReadoutBlock,
@@ -86,6 +106,7 @@ gate_dict: Dict[str, Optional[Callable]] = {
 }
 
 __all__ = [
+    # blocks
     "AtomicEnergiesBlock",
     "RadialEmbeddingBlock",
     "ZBLBasis",
@@ -99,25 +120,37 @@ __all__ = [
     "NonLinearDipolePolarReadoutBlock",
     "InteractionBlock",
     "NonLinearReadoutBlock",
+    "NonLinearBiasReadoutBlock",
+    # radial
     "PolynomialCutoff",
+    "SoftCoreCutoff",
     "BesselBasis",
     "GaussianBasis",
+    "ChebychevBasis",
+    "RadialMLP",
+    # models
     "MACE",
     "ScaleShiftMACE",
     "AtomicDipolesMACE",
     "AtomicDielectricMACE",
     "EnergyDipolesMACE",
+    # losses
     "WeightedEnergyForcesLoss",
     "WeightedForcesLoss",
     "WeightedEnergyForcesVirialsLoss",
     "WeightedEnergyForcesStressLoss",
     "DipoleSingleLoss",
+    "DipolePolarLoss",
     "WeightedEnergyForcesDipoleLoss",
     "WeightedHuberEnergyForcesStressLoss",
     "UniversalLoss",
     "WeightedEnergyForcesL1L2Loss",
+    # other
     "SymmetricContraction",
     "interaction_classes",
+    "readout_classes",
+    "scaling_classes",
+    "gate_dict",
     "compute_mean_std_atomic_inter_energy",
     "compute_avg_num_neighbors",
     "compute_statistics",

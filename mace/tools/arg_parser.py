@@ -100,7 +100,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--plot_frequency",
         help="Set plotting frequency: '0' for only at the end or an integer N to plot every N epochs.",
         type=int,
-        default="0",
+        default=0,
     )
 
     parser.add_argument(
@@ -129,7 +129,9 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="PerAtomRMSE",
     )
 
+    # -----------------------------
     # Model
+    # -----------------------------
     parser.add_argument(
         "--model",
         help="model type",
@@ -167,6 +169,27 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
     )
+
+    parser.add_argument(
+        "--cutoff_kind",
+        help="Cutoff family used in radial embedding (polynomial = legacy)",
+        type=str,
+        default="polynomial",
+        choices=["polynomial", "softcore"],
+    )
+    parser.add_argument(
+        "--softcore_cutoff_p",
+        help="Softcore cutoff exponent p (only used if cutoff_kind=softcore)",
+        type=int,
+        default=6,
+    )
+    parser.add_argument(
+        "--softcore_cutoff_eps",
+        help="Softcore cutoff epsilon (only used if cutoff_kind=softcore)",
+        type=float,
+        default=1e-3,
+    )
+
     parser.add_argument(
         "--pair_repulsion",
         help="use pair repulsion term with ZBL potential",
@@ -339,7 +362,9 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=False,
     )
 
+    # -----------------------------
     # Dataset
+    # -----------------------------
     parser.add_argument(
         "--train_file",
         help="Training set file, format is .xyz or .h5",
@@ -434,7 +459,9 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         required=False,
     )
 
+    # -----------------------------
     # Fine-tuning
+    # -----------------------------
     parser.add_argument(
         "--pseudolabel_replay",
         help="Use pseudolabels from foundation model for replay data in multihead finetuning",
@@ -559,7 +586,9 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=1.0,
     )
 
+    # -----------------------------
     # Keys
+    # -----------------------------
     parser.add_argument(
         "--energy_key",
         help="Key of reference energies in training xyz",
@@ -656,7 +685,9 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="pt_head",
     )
 
+    # -----------------------------
     # Loss and optimization
+    # -----------------------------
     parser.add_argument(
         "--loss",
         help="type of loss",
@@ -952,8 +983,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=str2bool,
         default=False,
     )
+
     # options for using Weights and Biases for experiment tracking
-    # to install see https://wandb.ai
     parser.add_argument(
         "--wandb",
         help="Use Weights and Biases for experiment tracking",
@@ -1000,8 +1031,13 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "start_swa",
             "energy_weight",
             "forces_weight",
+            # include these if you want them logged:
+            # "cutoff_kind",
+            # "softcore_cutoff_p",
+            # "softcore_cutoff_eps",
         ],
     )
+
     return parser
 
 
@@ -1023,6 +1059,7 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         )
+
     parser.add_argument(
         "--train_file",
         help="Training set h5 file",
@@ -1072,6 +1109,27 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--r_max", help="distance cutoff (in Ang)", type=float, default=5.0
     )
+
+    parser.add_argument(
+        "--cutoff_kind",
+        help="Cutoff family used in radial embedding (polynomial = legacy)",
+        type=str,
+        default="polynomial",
+        choices=["polynomial", "softcore"],
+    )
+    parser.add_argument(
+        "--softcore_cutoff_p",
+        help="Softcore cutoff exponent p (only used if cutoff_kind=softcore)",
+        type=int,
+        default=6,
+    )
+    parser.add_argument(
+        "--softcore_cutoff_eps",
+        help="Softcore cutoff epsilon (only used if cutoff_kind=softcore)",
+        type=float,
+        default=1e-3,
+    )
+
     parser.add_argument(
         "--config_type_weights",
         help="String of dictionary containing the weights for each config type",
@@ -1139,7 +1197,6 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=16,
     )
-
     parser.add_argument(
         "--scaling",
         help="type of scaling to the output",
@@ -1179,6 +1236,7 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         default=None,
         required=False,
     )
+
     return parser
 
 

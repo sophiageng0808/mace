@@ -63,6 +63,12 @@ class MACE(torch.nn.Module):
         gate: Optional[Callable],
         pair_repulsion: bool = False,
         apply_cutoff: bool = True,
+        cutoff_kind: Optional[str] = None,
+        cutoff_env_n: Optional[int] = None,
+        cutoff_env_eps: Optional[float] = None,
+        # Backward-compatible aliases
+        softcore_p: Optional[int] = None,
+        softcore_eps: Optional[float] = None,
         use_reduced_cg: bool = True,
         use_so3: bool = False,
         use_agnostic_product: bool = False,
@@ -128,6 +134,15 @@ class MACE(torch.nn.Module):
                     oeq_config,
                 )
 
+        # -----------------------------
+        # Radial embedding (aligned with cutoff_kind/cutoff_env_n/cutoff_env_eps)
+        # -----------------------------
+        # Defaults: if cutoff_kind is None, RadialEmbeddingBlock should behave like upstream:
+        # PolynomialCutoff(r_max, p=num_polynomial_cutoff)
+        if cutoff_env_n is None and softcore_p is not None:
+            cutoff_env_n = softcore_p
+        if cutoff_env_eps is None and softcore_eps is not None:
+            cutoff_env_eps = softcore_eps
         self.radial_embedding = RadialEmbeddingBlock(
             r_max=r_max,
             num_bessel=num_bessel,
@@ -135,8 +150,12 @@ class MACE(torch.nn.Module):
             radial_type=radial_type,
             distance_transform=distance_transform,
             apply_cutoff=apply_cutoff,
+            cutoff_kind=cutoff_kind,
+            cutoff_env_n=cutoff_env_n,
+            cutoff_env_eps=cutoff_env_eps,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
+
         if pair_repulsion:
             self.pair_repulsion_fn = ZBLBasis(p=num_polynomial_cutoff)
             self.pair_repulsion = True
@@ -147,7 +166,6 @@ class MACE(torch.nn.Module):
             sh_irreps = o3.Irreps.spherical_harmonics(max_ell, p=1)
         num_features = hidden_irreps.count(o3.Irrep(0, 1))
 
-        # interaction_irreps = (sh_irreps * num_features).sort()[0].simplify()
         def generate_irreps(l):
             str_irrep = "+".join([f"1x{i}e+1x{i}o" for i in range(l + 1)])
             return o3.Irreps(str_irrep)
@@ -155,6 +173,7 @@ class MACE(torch.nn.Module):
         sh_irreps_inter = sh_irreps
         if hidden_irreps.count(o3.Irrep(0, -1)) > 0:
             sh_irreps_inter = generate_irreps(max_ell)
+
         interaction_irreps = (sh_irreps_inter * num_features).sort()[0].simplify()
         interaction_irreps_first = (sh_irreps * num_features).sort()[0].simplify()
 
@@ -163,15 +182,19 @@ class MACE(torch.nn.Module):
         )
         if radial_MLP is None:
             radial_MLP = [64, 64, 64]
+
         # Interactions and readout
         self.atomic_energies_fn = AtomicEnergiesBlock(atomic_energies)
+
         if num_interactions == 1:
             hidden_irreps_out = str(hidden_irreps[0])
         else:
             hidden_irreps_out = hidden_irreps
+
         edge_irreps_first = None
         if use_edge_irreps_first and edge_irreps is not None:
             edge_irreps_first = o3.Irreps(f"{edge_irreps.count(o3.Irrep(0, 1))}x0e")
+
         inter = interaction_cls_first(
             node_attrs_irreps=node_attr_irreps,
             node_feats_irreps=node_feats_irreps,
@@ -219,11 +242,10 @@ class MACE(torch.nn.Module):
 
         for i in range(num_interactions - 1):
             if i == num_interactions - 2:
-                hidden_irreps_out = str(
-                    hidden_irreps[0]
-                )  # Select only scalars for last layer
+                hidden_irreps_out = str(hidden_irreps[0])  # scalars only
             else:
                 hidden_irreps_out = hidden_irreps
+
             inter = interaction_cls(
                 node_attrs_irreps=node_attr_irreps,
                 node_feats_irreps=hidden_irreps,
@@ -238,6 +260,7 @@ class MACE(torch.nn.Module):
                 oeq_config=oeq_config,
             )
             self.interactions.append(inter)
+
             prod = EquivariantProductBasisBlock(
                 node_feats_irreps=interaction_irreps,
                 target_irreps=hidden_irreps_out,
@@ -250,6 +273,7 @@ class MACE(torch.nn.Module):
                 use_agnostic_product=use_agnostic_product,
             )
             self.products.append(prod)
+
             if i == num_interactions - 2:
                 self.readouts.append(
                     readout_cls(
@@ -312,15 +336,17 @@ class MACE(torch.nn.Module):
         ]
         e0 = scatter_sum(
             src=node_e0, index=data["batch"], dim=0, dim_size=num_graphs
-        ).to(
-            vectors.dtype
-        )  # [n_graphs, n_heads]
+        ).to(vectors.dtype)  # [n_graphs, n_heads]
+
         # Embeddings
         node_feats = self.node_embedding(data["node_attrs"])
         edge_attrs = self.spherical_harmonics(vectors)
         edge_feats, cutoff = self.radial_embedding(
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
+        if self.apply_cutoff:
+            cutoff = None
+
         if hasattr(self, "pair_repulsion"):
             pair_node_energy = self.pair_repulsion_fn(
                 lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
@@ -359,12 +385,11 @@ class MACE(torch.nn.Module):
         node_energies_list = [node_e0, pair_node_energy]
         node_feats_concat: List[torch.Tensor] = []
 
-        for i, (interaction, product) in enumerate(
-            zip(self.interactions, self.products)
-        ):
+        for i, (interaction, product) in enumerate(zip(self.interactions, self.products)):
             node_attrs_slice = data["node_attrs"]
             if is_lammps and i > 0:
                 node_attrs_slice = node_attrs_slice[: lammps_natoms[0]]
+
             node_feats, sc = interaction(
                 node_attrs=node_attrs_slice,
                 node_feats=node_feats,
@@ -378,9 +403,8 @@ class MACE(torch.nn.Module):
             )
             if is_lammps and i == 0:
                 node_attrs_slice = node_attrs_slice[: lammps_natoms[0]]
-            node_feats = product(
-                node_feats=node_feats, sc=sc, node_attrs=node_attrs_slice
-            )
+
+            node_feats = product(node_feats=node_feats, sc=sc, node_attrs=node_attrs_slice)
             node_feats_concat.append(node_feats)
 
         for i, readout in enumerate(self.readouts):
@@ -422,6 +446,7 @@ class MACE(torch.nn.Module):
                 batch=data["batch"],
                 cell=cell,
             )
+
         return {
             "energy": total_energy,
             "node_energy": node_energy,
@@ -492,9 +517,7 @@ class ScaleShiftMACE(MACE):
         ]
         e0 = scatter_sum(
             src=node_e0, index=data["batch"], dim=0, dim_size=num_graphs
-        ).to(
-            vectors.dtype
-        )  # [n_graphs, num_heads]
+        ).to(vectors.dtype)  # [n_graphs, num_heads]
 
         # Embeddings
         node_feats = self.node_embedding(data["node_attrs"])
@@ -502,6 +525,8 @@ class ScaleShiftMACE(MACE):
         edge_feats, cutoff = self.radial_embedding(
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
+        if self.apply_cutoff:
+            cutoff = None
 
         if hasattr(self, "pair_repulsion"):
             pair_node_energy = self.pair_repulsion_fn(
@@ -539,12 +564,11 @@ class ScaleShiftMACE(MACE):
         node_es_list = [pair_node_energy]
         node_feats_list: List[torch.Tensor] = []
 
-        for i, (interaction, product) in enumerate(
-            zip(self.interactions, self.products)
-        ):
+        for i, (interaction, product) in enumerate(zip(self.interactions, self.products)):
             node_attrs_slice = data["node_attrs"]
             if is_lammps and i > 0:
                 node_attrs_slice = node_attrs_slice[: lammps_natoms[0]]
+
             node_feats, sc = interaction(
                 node_attrs=node_attrs_slice,
                 node_feats=node_feats,
@@ -558,17 +582,14 @@ class ScaleShiftMACE(MACE):
             )
             if is_lammps and i == 0:
                 node_attrs_slice = node_attrs_slice[: lammps_natoms[0]]
-            node_feats = product(
-                node_feats=node_feats, sc=sc, node_attrs=node_attrs_slice
-            )
+
+            node_feats = product(node_feats=node_feats, sc=sc, node_attrs=node_attrs_slice)
             node_feats_list.append(node_feats)
 
         for i, readout in enumerate(self.readouts):
             feat_idx = -1 if len(self.readouts) == 1 else i
             node_es_list.append(
-                readout(node_feats_list[feat_idx], node_heads)[
-                    num_atoms_arange, node_heads
-                ]
+                readout(node_feats_list[feat_idx], node_heads)[num_atoms_arange, node_heads]
             )
 
         node_feats_out = torch.cat(node_feats_list, dim=-1)
@@ -604,6 +625,7 @@ class ScaleShiftMACE(MACE):
                 batch=data["batch"],
                 cell=cell,
             )
+
         return {
             "energy": total_energy,
             "node_energy": node_energy,
@@ -618,7 +640,6 @@ class ScaleShiftMACE(MACE):
             "displacement": displacement,
             "node_feats": node_feats_out,
         }
-
 
 @compile_mode("script")
 class AtomicDipolesMACE(torch.nn.Module):
@@ -642,6 +663,9 @@ class AtomicDipolesMACE(torch.nn.Module):
             None
         ],  # Just here to make it compatible with energy models, MUST be None
         apply_cutoff: bool = True,  # pylint: disable=unused-argument
+        cutoff_kind: Optional[str] = None,  # None/"polynomial" | "softcore"
+        cutoff_env_n: int = 6,
+        cutoff_env_eps: float = 1e-3,
         use_reduced_cg: bool = True,  # pylint: disable=unused-argument
         use_so3: bool = False,  # pylint: disable=unused-argument
         distance_transform: str = "None",  # pylint: disable=unused-argument
@@ -652,6 +676,7 @@ class AtomicDipolesMACE(torch.nn.Module):
         edge_irreps: Optional[o3.Irreps] = None,  # pylint: disable=unused-argument
     ):
         super().__init__()
+        self.apply_cutoff = apply_cutoff
         self.register_buffer(
             "atomic_numbers", torch.tensor(atomic_numbers, dtype=torch.int64)
         )
@@ -672,6 +697,11 @@ class AtomicDipolesMACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            distance_transform=distance_transform,
+            apply_cutoff=apply_cutoff,
+            cutoff_kind=cutoff_kind,
+            cutoff_env_n=cutoff_env_n,
+            cutoff_env_eps=cutoff_env_eps,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
@@ -786,6 +816,8 @@ class AtomicDipolesMACE(torch.nn.Module):
         edge_feats, cutoff = self.radial_embedding(
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
+        if self.apply_cutoff:
+            cutoff = None
 
         # Interactions
         dipoles = []
@@ -856,6 +888,9 @@ class AtomicDielectricMACE(torch.nn.Module):
             None
         ],  # Just here to make it compatible with energy models, MUST be None
         apply_cutoff: bool = True,  # pylint: disable=unused-argument
+        cutoff_kind: Optional[str] = None,  # None/"polynomial" | "softcore"
+        cutoff_env_n: int = 6,
+        cutoff_env_eps: float = 1e-3,
         use_reduced_cg: bool = True,  # pylint: disable=unused-argument
         use_so3: bool = False,  # pylint: disable=unused-argument
         distance_transform: str = "None",  # pylint: disable=unused-argument
@@ -869,6 +904,7 @@ class AtomicDielectricMACE(torch.nn.Module):
         means_stds: Optional[Dict[str, torch.Tensor]] = None,  # pylint: disable=W0613
     ):
         super().__init__()
+        self.apply_cutoff = apply_cutoff
         self.register_buffer(
             "atomic_numbers", torch.tensor(atomic_numbers, dtype=torch.int64)
         )
@@ -886,8 +922,6 @@ class AtomicDielectricMACE(torch.nn.Module):
         self.use_polarizability = use_polarizability
         self.register_buffer("polarizability_std", torch.ones(3, 3))
         self.register_buffer("change_of_basis", get_change_of_basis())
-        # self.register_buffer("mean_polarizability_sh", torch.zeros(6))
-        # self.register_buffer("std_polarizability_sh", torch.ones(6))
         if means_stds is not None:
             if "dipole_mean" in means_stds:
                 self.dipole_mean.data.copy_(means_stds["dipole_mean"])
@@ -897,13 +931,7 @@ class AtomicDielectricMACE(torch.nn.Module):
                 self.polarizability_mean.data.copy_(means_stds["polarizability_mean"])
             if "polarizability_std" in means_stds:
                 self.polarizability_std.data.copy_(means_stds["polarizability_std"])
-            # if "mean_polarizability_sh" in means_stds:
-            #    self.mean_polarizability_sh.data.copy_(means_stds["mean_polarizability_sh"])
-            # if "std_polarizability_sh" in means_stds:
-            #    self.std_polarizability_sh.data.copy_(means_stds["std_polarizability_sh"])'''
         assert atomic_energies is None
-        # self.use_polarizability = use_polarizability
-        # self.use_dipole = use_dipole
 
         # Embedding
         node_attr_irreps = o3.Irreps([(num_elements, (0, 1))])
@@ -916,6 +944,11 @@ class AtomicDielectricMACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            distance_transform=distance_transform,
+            apply_cutoff=apply_cutoff,
+            cutoff_kind=cutoff_kind,
+            cutoff_env_n=cutoff_env_n,
+            cutoff_env_eps=cutoff_env_eps,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
@@ -963,16 +996,10 @@ class AtomicDielectricMACE(torch.nn.Module):
 
         for i in range(num_interactions - 1):
             if i == num_interactions - 2:
-                # does it always do polar and dipole together?
                 assert (
                     len(hidden_irreps) > 1
                 ), "To predict dipoles use at least l=1 hidden_irreps"
-                # hidden_irreps_out = str(
-                #     hidden_irreps[1]
-                # )  # Select only l=1 vectors for last layer
-                hidden_irreps_out = (
-                    hidden_irreps  # this is different in the AtomicDipoleMACE
-                )
+                hidden_irreps_out = hidden_irreps
             else:
                 hidden_irreps_out = hidden_irreps
             inter = interaction_cls(
@@ -1003,13 +1030,10 @@ class AtomicDielectricMACE(torch.nn.Module):
                         use_polarizability=True,
                     )
                 )
-                # print("Nonlinear irrpes: ", hidden_irreps_out, MLP_irreps)
-                # exit()
             else:
                 self.readouts.append(
                     LinearDipolePolarReadoutBlock(
                         hidden_irreps,
-                        # use_charge=True,
                         use_polarizability=True,
                     )
                 )
@@ -1047,6 +1071,8 @@ class AtomicDielectricMACE(torch.nn.Module):
         edge_feats, cutoff = self.radial_embedding(
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
+        if self.apply_cutoff:
+            cutoff = None
 
         # Interactions
         charges = []
@@ -1083,15 +1109,12 @@ class AtomicDielectricMACE(torch.nn.Module):
             else:
                 node_dipoles = node_out[:, 1:4]
                 dipoles.append(node_dipoles)
-                # raise ValueError(
-                #    "Polarizability is not used in this model, but it is required for the AtomicDielectricMACE."
-                # )
+
         contributions_dipoles = torch.stack(
             dipoles, dim=-1
         )  # [n_nodes,3,n_contributions]
         atomic_dipoles = torch.sum(contributions_dipoles, dim=-1)  # [n_nodes,3]
         atomic_charges = torch.stack(charges, dim=-1).sum(-1)  # [n_nodes,]
-        # The idea is to normalize the charges so that they sum to the net charge in the system before predicting the dipole.
         total_charge_excess = scatter_mean(
             src=atomic_charges, index=data["batch"], dim_size=num_graphs
         ) - (data["total_charge"] / num_atoms)
@@ -1103,7 +1126,7 @@ class AtomicDielectricMACE(torch.nn.Module):
             dim_size=num_graphs,
         )  # [n_graphs,3]
         baseline = compute_fixed_charge_dipole_polar(
-            charges=atomic_charges,  # or data["charges"], ?????
+            charges=atomic_charges,
             positions=data["positions"],
             batch=data["batch"],
             num_graphs=num_graphs,
@@ -1111,7 +1134,6 @@ class AtomicDielectricMACE(torch.nn.Module):
         total_dipole = total_dipole + baseline
 
         if self.use_polarizability:
-            # Compute the polarizabilities
             contributions_polarizabilities = torch.stack(
                 polarizabilities, dim=-1
             )  # [n_nodes,6,n_contributions]
@@ -1184,6 +1206,9 @@ class EnergyDipolesMACE(torch.nn.Module):
         gate: Optional[Callable],
         atomic_energies: Optional[np.ndarray],
         apply_cutoff: bool = True,  # pylint: disable=unused-argument
+        cutoff_kind: Optional[str] = None,  # None/"polynomial" | "softcore"
+        cutoff_env_n: int = 6,
+        cutoff_env_eps: float = 1e-3,
         use_reduced_cg: bool = True,  # pylint: disable=unused-argument
         use_so3: bool = False,  # pylint: disable=unused-argument
         distance_transform: str = "None",  # pylint: disable=unused-argument
@@ -1193,6 +1218,7 @@ class EnergyDipolesMACE(torch.nn.Module):
         edge_irreps: Optional[o3.Irreps] = None,  # pylint: disable=unused-argument
     ):
         super().__init__()
+        self.apply_cutoff = apply_cutoff
         self.register_buffer(
             "atomic_numbers", torch.tensor(atomic_numbers, dtype=torch.int64)
         )
@@ -1210,6 +1236,11 @@ class EnergyDipolesMACE(torch.nn.Module):
             r_max=r_max,
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
+            distance_transform=distance_transform,
+            apply_cutoff=apply_cutoff,
+            cutoff_kind=cutoff_kind,
+            cutoff_env_n=cutoff_env_n,
+            cutoff_env_eps=cutoff_env_eps,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
@@ -1348,6 +1379,8 @@ class EnergyDipolesMACE(torch.nn.Module):
         edge_feats, cutoff = self.radial_embedding(
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
+        if self.apply_cutoff:
+            cutoff = None
 
         # Interactions
         energies = [e0]
@@ -1370,7 +1403,6 @@ class EnergyDipolesMACE(torch.nn.Module):
                 node_attrs=data["node_attrs"],
             )
             node_out = readout(node_feats).squeeze(-1)  # [n_nodes, ]
-            # node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
             node_energies = node_out[:, 0]
             energy = scatter_sum(
                 src=node_energies, index=data["batch"], dim=-1, dim_size=num_graphs
@@ -1379,7 +1411,6 @@ class EnergyDipolesMACE(torch.nn.Module):
             node_dipoles = node_out[:, 1:]
             dipoles.append(node_dipoles)
 
-        # Compute the energies and dipoles
         contributions = torch.stack(energies, dim=-1)
         total_energy = torch.sum(contributions, dim=-1)  # [n_graphs, ]
         node_energy_contributions = torch.stack(node_energies_list, dim=-1)

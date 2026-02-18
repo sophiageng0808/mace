@@ -129,6 +129,8 @@ class MACELES(ScaleShiftMACE):
         edge_feats, cutoff = self.radial_embedding(
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
+        if self.apply_cutoff:
+            cutoff = None
 
         if hasattr(self, "pair_repulsion"):
             pair_node_energy = self.pair_repulsion_fn(

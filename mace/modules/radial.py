@@ -10,6 +10,7 @@ import ase
 import numpy as np
 import torch
 from e3nn.util.jit import compile_mode
+from typing import Optional
 
 from mace.tools.scatter import scatter_sum
 
@@ -143,6 +144,189 @@ class PolynomialCutoff(torch.nn.Module):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(p={self.p}, r_max={self.r_max})"
+
+
+@compile_mode("script")
+class SoftCoreCutoff(torch.nn.Module):
+    """Softcore cutoff envelope with r^n / (r^n + eps^n) factor.
+
+    This keeps the standard polynomial envelope at r_max while softly
+    damping near r=0 to avoid singular behavior.
+    """
+
+    cutoff_env_n: torch.Tensor
+    cutoff_env_eps: torch.Tensor
+    r_max: torch.Tensor
+
+    def __init__(self, r_max: float, cutoff_env_n: int = 6, cutoff_env_eps: float = 1e-3):
+        super().__init__()
+        self.cutoff_kind = "softcore"
+        self.register_buffer("cutoff_env_n", torch.tensor(cutoff_env_n, dtype=torch.int))
+        self.register_buffer(
+            "cutoff_env_eps",
+            torch.tensor(cutoff_env_eps, dtype=torch.get_default_dtype()),
+        )
+        self.register_buffer(
+            "r_max", torch.tensor(r_max, dtype=torch.get_default_dtype())
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        n_int = self.cutoff_env_n.to(torch.int)
+        r_over_r_max = x / self.r_max
+        envelope = (
+            1.0
+            - ((n_int + 1.0) * (n_int + 2.0) / 2.0) * torch.pow(r_over_r_max, n_int)
+            + n_int * (n_int + 2.0) * torch.pow(r_over_r_max, n_int + 1)
+            - (n_int * (n_int + 1.0) / 2) * torch.pow(r_over_r_max, n_int + 2)
+        )
+        envelope = envelope * (x < self.r_max)
+
+        n_float = self.cutoff_env_n.to(dtype=x.dtype)
+        eps = self.cutoff_env_eps.to(dtype=x.dtype)
+        softcore = torch.pow(x, n_float) / (
+            torch.pow(x, n_float) + torch.pow(eps, n_float)
+        )
+        return envelope * softcore
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(n={self.cutoff_env_n}, "
+            f"eps={self.cutoff_env_eps}, r_max={self.r_max})"
+        )
+
+@compile_mode("script")
+class RadialEmbeddingBlock(torch.nn.Module):
+    """
+    Radial embedding:
+      - radial basis: bessel / gaussian / chebyshev
+      - optional distance transform: Agnesi / Soft / None
+      - cutoff: polynomial OR softcore (selectable)
+
+    Backward compatible defaults:
+      cutoff_kind="polynomial" keeps old behavior.
+    """
+
+    def __init__(
+        self,
+        r_max: float,
+        num_bessel: int,
+        num_polynomial_cutoff: int,
+        radial_type: str = "bessel",
+        distance_transform: str = "None",
+        apply_cutoff: bool = True,
+        # -----------------------------
+        # NEW: cutoff selection + params
+        # -----------------------------
+        cutoff_kind: str = "polynomial",   # "polynomial" | "softcore"
+        softcore_p: int = 6,
+        softcore_eps: float = 1e-3,
+        # OPTIONAL: allow model_config naming too (your radial.py uses cutoff_env_*)
+        cutoff_env_n: Optional[int] = None,
+        cutoff_env_eps: Optional[float] = None,
+    ):
+        super().__init__()
+
+        # Basis
+        if radial_type == "bessel":
+            self.bessel_fn = BesselBasis(r_max=r_max, num_basis=num_bessel)
+        elif radial_type == "gaussian":
+            self.bessel_fn = GaussianBasis(r_max=r_max, num_basis=num_bessel)
+        elif radial_type == "chebyshev":
+            self.bessel_fn = ChebychevBasis(r_max=r_max, num_basis=num_bessel)
+        else:
+            raise ValueError(
+                f"Unknown radial_type={radial_type!r}. "
+                "Expected one of: 'bessel', 'gaussian', 'chebyshev'."
+            )
+
+        # Distance transform
+        if distance_transform == "Agnesi":
+            self.distance_transform = AgnesiTransform()
+        elif distance_transform == "Soft":
+            self.distance_transform = SoftTransform()
+        elif distance_transform == "None":
+            pass
+        else:
+            raise ValueError(
+                f"Unknown distance_transform={distance_transform!r}. "
+                "Expected one of: 'None', 'Agnesi', 'Soft'."
+            )
+
+        # Cutoff
+        self.apply_cutoff = apply_cutoff
+        self.out_dim = num_bessel
+
+        kind = (cutoff_kind or "polynomial").lower()
+
+        if kind == "polynomial":
+            self.cutoff_fn = PolynomialCutoff(r_max=r_max, p=num_polynomial_cutoff)
+
+        elif kind == "softcore":
+            # Map either naming convention -> SoftCoreCutoff signature
+            n = int(softcore_p) if cutoff_env_n is None else int(cutoff_env_n)
+            eps = float(softcore_eps) if cutoff_env_eps is None else float(cutoff_env_eps)
+
+            self.cutoff_fn = SoftCoreCutoff(
+                r_max=r_max,
+                cutoff_env_n=n,
+                cutoff_env_eps=eps,
+            )
+        else:
+            raise ValueError(
+                f"Unknown cutoff_kind={cutoff_kind!r}. "
+                "Expected one of: 'polynomial', 'softcore'."
+            )
+
+    def forward(
+        self,
+        edge_lengths: torch.Tensor,  # [n_edges, 1] or [n_edges]
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+    ):
+        cutoff = self.cutoff_fn(edge_lengths)
+
+        if hasattr(self, "distance_transform"):
+            edge_lengths = self.distance_transform(
+                edge_lengths, node_attrs, edge_index, atomic_numbers
+            )
+
+        radial = self.bessel_fn(edge_lengths)
+
+        if not self.apply_cutoff:
+            return radial, cutoff
+
+        return radial * cutoff, cutoff
+
+def build_cutoff_fn(
+    r_max: float,
+    num_polynomial_cutoff: int = 6,
+    cutoff_kind: str = "polynomial",
+    softcore_cutoff_p: int = 6,
+    softcore_cutoff_eps: float = 1e-3,
+    cutoff_env_n: Optional[int] = None,
+    cutoff_env_eps: Optional[float] = None,
+) -> torch.nn.Module:
+    """
+    Small factory that keeps the naming consistent across:
+      - CLI args: softcore_cutoff_p / softcore_cutoff_eps
+      - model_config keys: cutoff_env_n / cutoff_env_eps
+
+    Priority:
+      1) explicit cutoff_env_n/eps if provided
+      2) else fallback to CLI names softcore_cutoff_p/eps
+    """
+    kind = (cutoff_kind or "polynomial").lower()
+
+    if kind == "polynomial":
+        return PolynomialCutoff(r_max=r_max, p=num_polynomial_cutoff)
+
+    if kind == "softcore":
+        n = int(softcore_cutoff_p) if cutoff_env_n is None else int(cutoff_env_n)
+        eps = float(softcore_cutoff_eps) if cutoff_env_eps is None else float(cutoff_env_eps)
+        return SoftCoreCutoff(r_max=r_max, cutoff_env_n=n, cutoff_env_eps=eps)
+
+    raise ValueError(f"Unknown cutoff_kind='{cutoff_kind}'. Expected 'polynomial' or 'softcore'.")
 
 
 @compile_mode("script")
@@ -290,14 +474,7 @@ class SoftTransform(torch.nn.Module):
     """
 
     def __init__(self, alpha: float = 4.0, trainable=False):
-        """
-        Args:
-            p1 (float): Lower "clamp" point.
-            alpha (float): Steepness; if None, defaults to ~6/(r0-p1).
-            trainable (bool): Whether to make parameters trainable.
-        """
         super().__init__()
-        # Initialize parameters
         self.register_buffer(
             "alpha", torch.tensor(alpha, dtype=torch.get_default_dtype())
         )
@@ -317,17 +494,6 @@ class SoftTransform(torch.nn.Module):
         edge_index: torch.Tensor,
         atomic_numbers: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Compute r_0 based on atomic information.
-
-        Args:
-            node_attrs (torch.Tensor): Node attributes (one-hot encoding of atomic numbers).
-            edge_index (torch.Tensor): Edge index indicating connections.
-            atomic_numbers (torch.Tensor): Atomic numbers.
-
-        Returns:
-            torch.Tensor: r_0 values for each edge.
-        """
         sender = edge_index[0]
         receiver = edge_index[1]
         node_atomic_numbers = atomic_numbers[torch.argmax(node_attrs, dim=1)].unsqueeze(
@@ -367,17 +533,17 @@ class RadialMLP(torch.nn.Module):
     def __init__(self, channels_list) -> None:
         super().__init__()
 
-        modules = []
+        modules_list = []
         in_channels = channels_list[0]
 
         for idx, out_channels in enumerate(channels_list[1:], start=1):
-            modules.append(torch.nn.Linear(in_channels, out_channels, bias=True))
+            modules_list.append(torch.nn.Linear(in_channels, out_channels, bias=True))
             in_channels = out_channels
             if idx < len(channels_list) - 1:
-                modules.append(torch.nn.LayerNorm(out_channels))
-                modules.append(torch.nn.SiLU())
+                modules_list.append(torch.nn.LayerNorm(out_channels))
+                modules_list.append(torch.nn.SiLU())
 
-        self.net = torch.nn.Sequential(*modules)
+        self.net = torch.nn.Sequential(*modules_list)
         self.hs = channels_list
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
