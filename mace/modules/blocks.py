@@ -8,6 +8,7 @@ from abc import abstractmethod
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 import torch.nn.functional
 from e3nn import nn, o3
 from e3nn.util.jit import compile_mode
@@ -43,7 +44,6 @@ from .radial import (
 def build_pair_repulsion(
     *,
     num_polynomial_cutoff: int,
-    pair_repulsion_kinds: Optional[Union[List[str], str]],
     pair_repulsion_mode: int,
     zbl_p: int,
     r12_scale: float,
@@ -51,13 +51,6 @@ def build_pair_repulsion(
     r12_switch_width: Optional[float],
     pair_repulsion_r_min: float,
 ) -> PairRepulsionSwitch:
-    if pair_repulsion_kinds is None:
-        pair_repulsion_kinds = ["zbl"]
-    if isinstance(pair_repulsion_kinds, str):
-        pair_repulsion_kinds = [
-            k.strip() for k in pair_repulsion_kinds.split(",") if k.strip()
-        ]
-
     zbl_mod = ZBLRepulsion(
         p=zbl_p,
         r_min=pair_repulsion_r_min,
@@ -73,13 +66,7 @@ def build_pair_repulsion(
         r12_cutoff=r12_cutoff,
         r12_switch_width=r12_switch_width,
     )
-    return PairRepulsionSwitch(
-        kinds=pair_repulsion_kinds,
-        zbl=zbl_mod,
-        r12=r12_mod,
-        mode=pair_repulsion_mode,
-    )
-
+    return PairRepulsionSwitch(zbl=zbl_mod, r12=r12_mod, mode=pair_repulsion_mode)
 
 @compile_mode("script")
 class LinearNodeEmbeddingBlock(torch.nn.Module):

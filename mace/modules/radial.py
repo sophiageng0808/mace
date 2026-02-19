@@ -414,13 +414,11 @@ class PairRepulsionSwitch(torch.nn.Module):
     TorchScript-safe router: mode 0=off, 1=zbl, 2=r12, 3=both.
     """
 
-    def __init__(self, kinds, zbl=None, r12=None, mode: int = 0, **kwargs):
+    def __init__(self, zbl: ZBLRepulsion, r12: R12Repulsion, mode: int = 0):
         super().__init__()
-        self.kinds = kinds
         self.mode = int(mode)
         self.zbl = zbl
         self.r12 = r12
-
         if self.mode < 0 or self.mode > 3:
             raise ValueError("PairRepulsionSwitch mode must be 0(off),1(zbl),2(r12),3(both).")
 

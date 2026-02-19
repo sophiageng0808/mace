@@ -169,7 +169,6 @@ class MACE(torch.nn.Module):
         if pair_repulsion:
             self.pair_repulsion_fn = build_pair_repulsion(
                 num_polynomial_cutoff=num_polynomial_cutoff,
-                pair_repulsion_kinds=pair_repulsion_kinds,
                 pair_repulsion_mode=pair_repulsion_mode,
                 zbl_p=zbl_p,
                 r12_scale=r12_scale,
