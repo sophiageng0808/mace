@@ -42,8 +42,15 @@ from .models import (
     EnergyDipolesMACE,
     ScaleShiftMACE,
 )
-from .radial import BesselBasis, GaussianBasis, PolynomialCutoff
-from .repulsion import ZBLRepulsion, R12Repulsion, PairRepulsionSwitch
+from .radial import (
+    BesselBasis,
+    GaussianBasis,
+    PolynomialCutoff,
+    ZBLBasis,
+    PairRepulsionSwitch,
+    R12Repulsion,
+    ZBLRepulsion,
+)
 from .symmetric_contraction import SymmetricContraction
 from .utils import (
     compute_avg_num_neighbors,
@@ -90,6 +97,9 @@ __all__ = [
     "AtomicEnergiesBlock",
     "RadialEmbeddingBlock",
     "ZBLBasis",
+    "ZBLRepulsion",
+    "R12Repulsion",
+    "PairRepulsionSwitch",
     "LinearNodeEmbeddingBlock",
     "LinearReadoutBlock",
     "EquivariantProductBasisBlock",

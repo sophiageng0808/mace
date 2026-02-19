@@ -13,7 +13,6 @@ from e3nn import o3
 from e3nn.util.jit import compile_mode
 
 from mace.modules.embeddings import GenericJointEmbedding
-from mace.modules.repulsion import ZBLRepulsion, R12Repulsion, PairRepulsionSwitch
 from mace.tools.scatter import scatter_mean, scatter_sum
 from mace.tools.torch_tools import get_change_of_basis, spherical_to_cartesian
 
@@ -29,6 +28,7 @@ from .blocks import (
     NonLinearDipoleReadoutBlock,
     NonLinearReadoutBlock,
     RadialEmbeddingBlock,
+    build_pair_repulsion,
     ScaleShiftBlock,
 )
 from .utils import (
@@ -46,7 +46,7 @@ from .utils import (
 def _init_with_supported_kwargs(cls, /, **kwargs):
     """
     Initialize cls(**kwargs) but only pass kwargs that exist in cls.__init__ signature.
-    Keeps this file compatible with different repulsion implementations across branches.
+    Kept for backward compatibility across branches.
     """
     sig = inspect.signature(cls.__init__)
     allowed = set(sig.parameters.keys())
@@ -164,75 +164,19 @@ class MACE(torch.nn.Module):
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
         # -------------------------
-        # Pair repulsion (NEW API)
+        # Pair repulsion (ZBL / r12)
         # -------------------------
         if pair_repulsion:
-            if pair_repulsion_kinds is None:
-                pair_repulsion_kinds = ["zbl"]
-
-            # allow a single string accidentally passed
-            if isinstance(pair_repulsion_kinds, str):
-                pair_repulsion_kinds = [
-                    k.strip() for k in pair_repulsion_kinds.split(",") if k.strip()
-                ]
-
-            # Build ZBL and R12 with only supported kwargs (branch-safe)
-            zbl_mod = _init_with_supported_kwargs(
-                ZBLRepulsion,
-                # smoothing/polynomial order (different branches use different names)
-                p=num_polynomial_cutoff,
+            self.pair_repulsion_fn = build_pair_repulsion(
+                num_polynomial_cutoff=num_polynomial_cutoff,
+                pair_repulsion_kinds=pair_repulsion_kinds,
+                pair_repulsion_mode=pair_repulsion_mode,
                 zbl_p=zbl_p,
-                p_zbl=zbl_p,
-                # distance params
-                r_min=pair_repulsion_r_min,
-                # cutoff flags
-                apply_cutoff=True,
-                assume_directed_double=True,
-            )
-
-            r12_mod = _init_with_supported_kwargs(
-                R12Repulsion,
-                p=num_polynomial_cutoff,
-                r_min=pair_repulsion_r_min,
-                apply_cutoff=True,
-                assume_directed_double=True,
-
-                # coefficient name differs across branches; pass aliases, helper will filter
-                scale=r12_scale,
-                c12=r12_scale,
-                prefactor=r12_scale,
-                A=r12_scale,
-
-                # cutoff name differs across branches
-                cutoff=r12_cutoff,
-                r_cutoff=r12_cutoff,
+                r12_scale=r12_scale,
                 r12_cutoff=r12_cutoff,
-
-                # switch width name differs across branches
-                switch_width=r12_switch_width,
-                width=r12_switch_width,
+                r12_switch_width=r12_switch_width,
+                pair_repulsion_r_min=pair_repulsion_r_min,
             )
-
-            _mode = pair_repulsion_mode
-            if isinstance(_mode, str):
-                _mode_l = _mode.strip().lower()
-                mode_map = {
-                    "sum": 0,
-                    "add": 0,
-                    "zbl": 1,
-                    "r12": 2,
-                    "max": 3,
-                }
-                if _mode_l not in mode_map:
-                    raise ValueError(f"Unknown pair_repulsion_mode='{pair_repulsion_mode}'. Use int 0..3 or one of {list(mode_map)}.")
-                _mode = mode_map[_mode_l]
-
-        self.pair_repulsion_fn = PairRepulsionSwitch(
-            kinds=pair_repulsion_kinds,
-            zbl=zbl_mod,
-            r12=r12_mod,
-            mode=_mode,
-        )
 
         if not use_so3:
             sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
@@ -430,9 +374,12 @@ class MACE(torch.nn.Module):
                 pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
             if is_lammps:
                 pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
-            pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
-                -1, len(self.heads)
-            )
+            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
+                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
+                    -1, node_e0.shape[1]
+                )
+            else:
+                pair_node_energy = pair_node_e_scalar
         else:
             pair_node_energy = torch.zeros_like(node_e0)
 
@@ -613,7 +560,12 @@ class ScaleShiftMACE(MACE):
                 pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
             if is_lammps:
                 pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
-            pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(-1, len(self.heads))
+            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
+                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
+                    -1, node_e0.shape[1]
+                )
+            else:
+                pair_node_energy = pair_node_e_scalar
         else:
             pair_node_energy = torch.zeros_like(node_e0)
 

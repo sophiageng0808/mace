@@ -10,8 +10,11 @@ import ase
 import numpy as np
 import torch
 from e3nn.util.jit import compile_mode
+from typing import Optional
 
 from mace.tools.scatter import scatter_sum
+
+KE = 14.3996454784255
 
 
 @compile_mode("script")
@@ -219,6 +222,228 @@ class ZBLBasis(torch.nn.Module):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(c={self.c})"
+
+
+def _node_atomic_numbers_from_onehot(
+    node_attrs: torch.Tensor,
+    atomic_numbers: torch.Tensor,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    return (
+        node_attrs.to(dtype=dtype, device=device)
+        * atomic_numbers.to(dtype=dtype, device=device)
+    ).sum(dim=1)
+
+
+def _poly_cutoff(
+    r: torch.Tensor,
+    r_max: torch.Tensor,
+    p: int,
+    apply_cutoff: bool,
+) -> torch.Tensor:
+    if not apply_cutoff:
+        return torch.ones_like(r)
+    x = torch.clamp(r / r_max, 0.0, 1.0)
+    return (1.0 - x).pow(int(p))
+
+
+def _split_edge_energy_to_nodes(
+    V_edge: torch.Tensor,
+    edge_index: torch.Tensor,
+    n_nodes: int,
+    assume_directed_double: bool = True,
+) -> torch.Tensor:
+    src = edge_index[0]
+    dst = edge_index[1]
+
+    if assume_directed_double:
+        V_edge = 0.5 * V_edge
+
+    half = 0.5 * V_edge
+    node_E = scatter_sum(half, src, dim=0, dim_size=n_nodes) + scatter_sum(
+        half, dst, dim=0, dim_size=n_nodes
+    )
+    return node_E
+
+
+@compile_mode("script")
+class ZBLRepulsion(torch.nn.Module):
+    """
+    ZBL repulsion computed on edges:
+      V_ZBL(r) = KE * Zi*Zj / r * phi(r/a)
+    """
+
+    def __init__(
+        self,
+        p: int,
+        r_min: float = 0.2,
+        apply_cutoff: bool = True,
+        assume_directed_double: bool = True,
+    ):
+        super().__init__()
+        self.p = int(p)
+        self.r_min = float(r_min)
+        self.apply_cutoff = bool(apply_cutoff)
+        self.assume_directed_double = bool(assume_directed_double)
+
+        self.register_buffer("ke", torch.tensor(KE))
+        self.register_buffer("zbl_a", torch.tensor([0.1818, 0.5099, 0.2802, 0.02817]))
+        self.register_buffer("zbl_b", torch.tensor([3.2, 0.9423, 0.4029, 0.2016]))
+        self.register_buffer("a0", torch.tensor(0.52917721092))
+
+    def _screening_length(self, Zi: torch.Tensor, Zj: torch.Tensor) -> torch.Tensor:
+        return 0.88534 * self.a0 / (Zi.pow(0.23) + Zj.pow(0.23))
+
+    def _phi(self, x: torch.Tensor) -> torch.Tensor:
+        a = self.zbl_a.to(dtype=x.dtype, device=x.device)
+        b = self.zbl_b.to(dtype=x.dtype, device=x.device)
+        return (
+            a[0] * torch.exp(-b[0] * x)
+            + a[1] * torch.exp(-b[1] * x)
+            + a[2] * torch.exp(-b[2] * x)
+            + a[3] * torch.exp(-b[3] * x)
+        )
+
+    def forward(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
+        src = edge_index[0]
+        dst = edge_index[1]
+
+        r = torch.clamp(lengths, min=self.r_min)
+        dtype = r.dtype
+        device = r.device
+
+        Z_node = _node_atomic_numbers_from_onehot(node_attrs, atomic_numbers, dtype, device)
+        Zi = Z_node[src]
+        Zj = Z_node[dst]
+
+        a = self._screening_length(Zi, Zj)
+        x = r / a
+        phi = self._phi(x)
+
+        ke = self.ke.to(dtype=dtype, device=device)
+        V = (ke * Zi * Zj) * (phi / r)
+        cutoff = _poly_cutoff(r, r_max.to(dtype=dtype, device=device), self.p, self.apply_cutoff)
+        V = V * cutoff
+
+        n_nodes = node_attrs.shape[0]
+        return _split_edge_energy_to_nodes(
+            V_edge=V,
+            edge_index=edge_index,
+            n_nodes=n_nodes,
+            assume_directed_double=self.assume_directed_double,
+        )
+
+
+@compile_mode("script")
+class R12Repulsion(torch.nn.Module):
+    """
+    Pure r^-12 repulsion on edges: V_12(r) = c12 / r^12.
+    """
+
+    def __init__(
+        self,
+        p: int,
+        c12: float,
+        r_min: float = 0.2,
+        apply_cutoff: bool = True,
+        assume_directed_double: bool = True,
+        r12_cutoff: Optional[float] = None,
+        r12_switch_width: Optional[float] = None,
+    ):
+        super().__init__()
+        self.p = int(p)
+        self.c12 = float(c12)
+        self.r_min = float(r_min)
+        self.apply_cutoff = bool(apply_cutoff)
+        self.assume_directed_double = bool(assume_directed_double)
+        self.register_buffer(
+            "r12_cutoff",
+            torch.tensor(-1.0 if r12_cutoff is None else float(r12_cutoff)),
+        )
+        self.register_buffer(
+            "r12_switch_width",
+            torch.tensor(0.0 if r12_switch_width is None else float(r12_switch_width)),
+        )
+
+    def forward(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
+        r = torch.clamp(lengths, min=self.r_min)
+        dtype = r.dtype
+        device = r.device
+
+        c12 = torch.tensor(self.c12, dtype=dtype, device=device)
+        V = c12 / (r**12)
+
+        cutoff = _poly_cutoff(r, r_max.to(dtype=dtype, device=device), self.p, self.apply_cutoff)
+        V = V * cutoff
+
+        r12_cutoff = self.r12_cutoff.to(dtype=dtype, device=device)
+        width = self.r12_switch_width.to(dtype=dtype, device=device)
+        hard = (r <= r12_cutoff).to(dtype)
+        t = torch.clamp((r12_cutoff - r) / torch.clamp(width, min=1e-12), 0.0, 1.0)
+        smooth = t * t * (3.0 - 2.0 * t)
+        cutoff_extra = torch.where(width > 0, smooth, hard)
+        V = V * torch.where(r12_cutoff > 0, cutoff_extra, torch.ones_like(r))
+
+        n_nodes = node_attrs.shape[0]
+        return _split_edge_energy_to_nodes(
+            V_edge=V,
+            edge_index=edge_index,
+            n_nodes=n_nodes,
+            assume_directed_double=self.assume_directed_double,
+        )
+
+
+@compile_mode("script")
+class PairRepulsionSwitch(torch.nn.Module):
+    """
+    TorchScript-safe router: mode 0=off, 1=zbl, 2=r12, 3=both.
+    """
+
+    def __init__(self, kinds, zbl=None, r12=None, mode: int = 0, **kwargs):
+        super().__init__()
+        self.kinds = kinds
+        self.mode = int(mode)
+        self.zbl = zbl
+        self.r12 = r12
+
+        if self.mode < 0 or self.mode > 3:
+            raise ValueError("PairRepulsionSwitch mode must be 0(off),1(zbl),2(r12),3(both).")
+
+    def forward(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
+        n_nodes = node_attrs.shape[0]
+        out = torch.zeros((n_nodes,), dtype=lengths.dtype, device=lengths.device)
+
+        if self.mode == 0:
+            return out
+        if self.mode == 1:
+            return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max)
+        if self.mode == 2:
+            return self.r12(lengths, node_attrs, edge_index, atomic_numbers, r_max)
+        return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max) + self.r12(
+            lengths, node_attrs, edge_index, atomic_numbers, r_max
+        )
 
 
 @compile_mode("script")

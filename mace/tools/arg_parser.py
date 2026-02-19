@@ -190,7 +190,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     #   3 = max / softmax / other (depends on your implementation)
     parser.add_argument(
         "--pair_repulsion_mode",
-        help="combination mode for PairRepulsionSwitch (INT). 0=sum, 1=zbl-only, 2=r12-only, 3=other (see repulsion.py)",
+        help="combination mode for PairRepulsionSwitch (INT). 0=sum, 1=zbl-only, 2=r12-only, 3=both",
         type=int,
         default=0,
         choices=[0, 1, 2, 3],

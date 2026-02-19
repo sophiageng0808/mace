@@ -3,7 +3,7 @@
 #SBATCH --output=outslurm/%x_%A_%a.out
 #SBATCH --error=outslurm/%x_%A_%a.err
 #SBATCH --time=36:00:00
-#SBATCH --array=0-4
+#SBATCH --array=0-3
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:0
@@ -42,10 +42,9 @@ export PYTHONPATH="$REPULSION_WT:${PYTHONPATH:-}"
 # -----------------------------
 # Task mapping
 # 0 = baseline (no pair repulsion)
-# 1 = zbl only
-# 2 = r12 only
-# 3 = zbl + r12 (mode 0)
-# 4 = zbl + r12 (mode 1)
+# 1 = zbl only (mode 1)
+# 2 = r12 only (mode 2)
+# 3 = zbl + r12 (mode 3)
 # -----------------------------
 TASK="${SLURM_ARRAY_TASK_ID}"
 
@@ -59,19 +58,15 @@ case "$TASK" in
     ;;
   1)
     NAME="repulsion_zbl"
-    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl"
+    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl --pair_repulsion_mode 1"
     ;;
   2)
     NAME="repulsion_r12"
-    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds r12 --r12_scale 1.0 --r12_cutoff 0.8"
+    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds r12 --pair_repulsion_mode 2 --r12_scale 1.0 --r12_cutoff 0.8"
     ;;
   3)
-    NAME="repulsion_zbl_r12_mode0"
-    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl r12 --pair_repulsion_mode 0 --r12_scale 1.0 --r12_cutoff 0.8"
-    ;;
-  4)
-    NAME="repulsion_zbl_r12_mode1"
-    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl r12 --pair_repulsion_mode 1 --r12_scale 1.0 --r12_cutoff 0.8"
+    NAME="repulsion_zbl_r12"
+    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl r12 --pair_repulsion_mode 3 --r12_scale 1.0 --r12_cutoff 0.8"
     ;;
   *)
     echo "Unknown task id: $TASK"
