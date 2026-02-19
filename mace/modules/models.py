@@ -542,6 +542,15 @@ class ScaleShiftMACE(MACE):
         node_e0 = self.atomic_energies_fn(data["node_attrs"])[num_atoms_arange, node_heads]  # [n_nodes,n_heads]
         e0 = scatter_sum(src=node_e0, index=data["batch"], dim=0, dim_size=num_graphs).to(vectors.dtype)  # [n_graphs,n_heads]
 
+        def _match_node_energy_shape(tensor: torch.Tensor) -> torch.Tensor:
+            if node_e0.dim() == 1:
+                if tensor.dim() == 2:
+                    return tensor[num_atoms_arange, node_heads]
+                return tensor
+            if node_e0.dim() == 2 and tensor.dim() == 1:
+                return tensor.unsqueeze(-1).expand(-1, node_e0.shape[1])
+            return tensor
+
         # Embeddings
         node_feats = self.node_embedding(data["node_attrs"])
         edge_attrs = self.spherical_harmonics(vectors)
@@ -568,6 +577,7 @@ class ScaleShiftMACE(MACE):
                 pair_node_energy = pair_node_e_scalar
         else:
             pair_node_energy = torch.zeros_like(node_e0)
+        pair_node_energy = _match_node_energy_shape(pair_node_energy)
 
         # Extra feature embeddings
         if hasattr(self, "joint_embedding"):
@@ -608,7 +618,8 @@ class ScaleShiftMACE(MACE):
 
         for i, readout in enumerate(self.readouts):
             feat_idx = -1 if len(self.readouts) == 1 else i
-            node_es_list.append(readout(node_feats_list[feat_idx], node_heads)[num_atoms_arange, node_heads])  # [n_nodes,n_heads]
+            node_es = readout(node_feats_list[feat_idx], node_heads)[num_atoms_arange, node_heads]
+            node_es_list.append(_match_node_energy_shape(node_es))  # [n_nodes,n_heads]
 
         node_feats_out = torch.cat(node_feats_list, dim=-1)
         node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)  # [n_nodes,n_heads]
