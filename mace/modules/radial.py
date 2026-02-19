@@ -328,7 +328,7 @@ class ZBLRepulsion(torch.nn.Module):
         x = r / a
         phi = self._phi(x)
 
-        ke = self.ke.to(dtype=dtype, device=device)
+git add mace/modules/__init__.py mace/modules/blocks.py mace/modules/models.py mace/modules/radial.py mace/modules/repulsion.py mace/tools/arg_parser.py mace/tools/scripts_utils.py repulsion.sh        ke = self.ke.to(dtype=dtype, device=device)
         V = (ke * Zi * Zj) * (phi / r)
         cutoff = _poly_cutoff(r, r_max.to(dtype=dtype, device=device), self.p, self.apply_cutoff)
         V = V * cutoff
