@@ -260,6 +260,7 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         )
     except AttributeError:
         correlation = model.products[0].symmetric_contractions.contraction_degree
+
     config = {
         "r_max": model.r_max.item(),
         "num_bessel": len(model.radial_embedding.bessel_fn.bessel_weights),
@@ -527,8 +528,12 @@ def convert_from_json_format(dict_input):
     dict_output["radial_MLP"] = ast.literal_eval(dict_input["radial_MLP"])
     dict_output["pair_repulsion"] = ast.literal_eval(dict_input["pair_repulsion"])
     dict_output["distance_transform"] = dict_input["distance_transform"]
-    dict_output["atomic_inter_scale"] = float(dict_input["atomic_inter_scale"])
-    dict_output["atomic_inter_shift"] = float(dict_input["atomic_inter_shift"])
+
+    # ---- CHANGE: multihead-safe scale/shift on load ----
+    # Old code forced float(...) which breaks when config stores arrays/lists for multihead.
+    dict_output["atomic_inter_scale"] = np.array(dict_input["atomic_inter_scale"])
+    dict_output["atomic_inter_shift"] = np.array(dict_input["atomic_inter_shift"])
+    # ---------------------------------------------------
 
     return dict_output
 

@@ -73,6 +73,7 @@ class MACE(torch.nn.Module):
         use_edge_irreps_first: bool = False,
         radial_MLP: Optional[List[int]] = None,
         radial_type: Optional[str] = "bessel",
+        neumann_eps: float = 1e-3,
         heads: Optional[List[str]] = None,
         cueq_config: Optional[Dict[str, Any]] = None,
         embedding_specs: Optional[Dict[str, Any]] = None,
@@ -133,6 +134,7 @@ class MACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            neumann_eps=neumann_eps,
             distance_transform=distance_transform,
             apply_cutoff=apply_cutoff,
         )
@@ -646,6 +648,7 @@ class AtomicDipolesMACE(torch.nn.Module):
         use_so3: bool = False,  # pylint: disable=unused-argument
         distance_transform: str = "None",  # pylint: disable=unused-argument
         radial_type: Optional[str] = "bessel",
+        neumann_eps: float = 1e-3,
         radial_MLP: Optional[List[int]] = None,
         cueq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
         oeq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
@@ -672,6 +675,7 @@ class AtomicDipolesMACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            neumann_eps=neumann_eps,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
@@ -860,6 +864,7 @@ class AtomicDielectricMACE(torch.nn.Module):
         use_so3: bool = False,  # pylint: disable=unused-argument
         distance_transform: str = "None",  # pylint: disable=unused-argument
         radial_type: Optional[str] = "bessel",
+        neumann_eps: float = 1e-3,
         radial_MLP: Optional[List[int]] = None,
         cueq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
         oeq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
@@ -916,6 +921,7 @@ class AtomicDielectricMACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            neumann_eps=neumann_eps,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 

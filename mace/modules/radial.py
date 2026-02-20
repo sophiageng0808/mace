@@ -58,6 +58,106 @@ class BesselBasis(torch.nn.Module):
 
 
 @compile_mode("script")
+class NeumannBasis(torch.nn.Module):
+    """
+    Spherical Neumann basis (order 0).
+
+    Uses the same frequency grid as BesselBasis:
+        k_n = n*pi/r_max
+    and evaluates:
+        y0(k_n * r) = -cos(k_n * r) / r
+    """
+
+    def __init__(self, r_max: float, num_basis=8, trainable=False):
+        super().__init__()
+
+        neumann_weights = (
+            np.pi
+            / r_max
+            * torch.linspace(
+                start=1.0,
+                end=num_basis,
+                steps=num_basis,
+                dtype=torch.get_default_dtype(),
+            )
+        )
+        if trainable:
+            self.neumann_weights = torch.nn.Parameter(neumann_weights)
+        else:
+            self.register_buffer("neumann_weights", neumann_weights)
+
+        self.register_buffer(
+            "r_max", torch.tensor(r_max, dtype=torch.get_default_dtype())
+        )
+        self.register_buffer(
+            "prefactor",
+            torch.tensor(np.sqrt(2.0 / r_max), dtype=torch.get_default_dtype()),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., 1]
+        numerator = -torch.cos(self.neumann_weights * x)  # [..., num_basis]
+        return self.prefactor * (numerator / x)
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={len(self.neumann_weights)}, "
+            f"trainable={self.neumann_weights.requires_grad})"
+        )
+
+@compile_mode("script")
+class RegularizedNeumannBasis(torch.nn.Module):
+    """
+    Regularized spherical Neumann basis (order 0) with softened origin.
+
+    Uses the same frequency grid as BesselBasis:
+        k_n = n*pi/r_max
+    and evaluates:
+        y0_reg(k_n * r) = -cos(k_n * sqrt(r^2 + eps^2)) / sqrt(r^2 + eps^2)
+    """
+
+    def __init__(self, r_max: float, num_basis=8, eps: float = 1e-3, trainable=False):
+        super().__init__()
+
+        neumann_weights = (
+            np.pi
+            / r_max
+            * torch.linspace(
+                start=1.0,
+                end=num_basis,
+                steps=num_basis,
+                dtype=torch.get_default_dtype(),
+            )
+        )
+        if trainable:
+            self.neumann_weights = torch.nn.Parameter(neumann_weights)
+        else:
+            self.register_buffer("neumann_weights", neumann_weights)
+
+        self.register_buffer(
+            "r_max", torch.tensor(r_max, dtype=torch.get_default_dtype())
+        )
+        self.register_buffer(
+            "prefactor",
+            torch.tensor(np.sqrt(2.0 / r_max), dtype=torch.get_default_dtype()),
+        )
+        self.register_buffer(
+            "eps", torch.tensor(eps, dtype=torch.get_default_dtype())
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., 1]
+        # x is expected shape [..., 1] (same as BesselBasis usage)
+        x_reg = torch.sqrt(x * x + self.eps * self.eps)  # [..., 1]
+        numerator = -torch.cos(self.neumann_weights * x_reg)  # [..., num_basis]
+        return self.prefactor * (numerator / x_reg)
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(r_max={self.r_max}, num_basis={len(self.neumann_weights)}, "
+            f"eps={self.eps}, trainable={self.neumann_weights.requires_grad})"
+        )
+
+
+@compile_mode("script")
 class ChebychevBasis(torch.nn.Module):
     """
     Equation (7)

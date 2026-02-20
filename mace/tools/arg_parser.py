@@ -153,7 +153,21 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="type of radial basis functions",
         type=str,
         default="bessel",
-        choices=["bessel", "gaussian", "chebyshev"],
+        # NEW: add neumann_reg as an option
+        choices=[
+            "bessel",
+            "gaussian",
+            "chebyshev",
+            "neumann",
+            "neumann_reg",
+            "regularized_neumann",
+        ],
+    )
+    parser.add_argument(
+        "--neumann_eps",
+        help="epsilon for regularized Neumann basis: y_l(sqrt(r^2 + eps^2))",
+        type=float,
+        default=1e-3,
     )
     parser.add_argument(
         "--num_radial_basis",
@@ -1106,7 +1120,7 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         "--dipole_key",
         help="Key of reference dipoles in training xyz",
         type=str,
-        default=DefaultKeys.DIPOLE.value,
+       default=DefaultKeys.DIPOLE.value,
     )
     parser.add_argument(
         "--polarizability_key",

@@ -1,6 +1,6 @@
 ###########################################################################################
 # Elementary Block for Building O(3) Equivariant Higher Order Message Passing Neural Network
-# Authors: Ilyes Batatia, Gregor Simm
+# Authors: Ilyes Batatia, Gregor Simm, David Kovacs
 # This program is distributed under the MIT License (see MIT.md)
 ###########################################################################################
 
@@ -8,6 +8,7 @@ from abc import abstractmethod
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
+import torch 
 import torch.nn.functional
 from e3nn import nn, o3
 from e3nn.util.jit import compile_mode
@@ -34,6 +35,8 @@ from .radial import (
     PolynomialCutoff,
     RadialMLP,
     SoftTransform,
+    NeumannBasis,
+    RegularizedNeumannBasis,
 )
 
 
@@ -341,6 +344,7 @@ class RadialEmbeddingBlock(torch.nn.Module):
         radial_type: str = "bessel",
         distance_transform: str = "None",
         apply_cutoff: bool = True,
+        neumann_eps: float = 1e-3,
     ):
         super().__init__()
         if radial_type == "bessel":
@@ -349,10 +353,24 @@ class RadialEmbeddingBlock(torch.nn.Module):
             self.bessel_fn = GaussianBasis(r_max=r_max, num_basis=num_bessel)
         elif radial_type == "chebyshev":
             self.bessel_fn = ChebychevBasis(r_max=r_max, num_basis=num_bessel)
+        elif radial_type == "neumann":
+            self.bessel_fn = NeumannBasis(r_max=r_max, num_basis=num_bessel)
+        elif radial_type in ("neumann_reg", "regularized_neumann"):
+            self.bessel_fn = RegularizedNeumannBasis(
+                r_max=r_max, num_basis=num_bessel, eps=neumann_eps
+            )
+        else:
+            raise ValueError(f"Unknown radial_type: {radial_type}")
+
         if distance_transform == "Agnesi":
             self.distance_transform = AgnesiTransform()
         elif distance_transform == "Soft":
             self.distance_transform = SoftTransform()
+        elif distance_transform == "None":
+            pass
+        else:
+            raise ValueError(f"Unknown distance_transform: {distance_transform}")
+
         self.cutoff_fn = PolynomialCutoff(r_max=r_max, p=num_polynomial_cutoff)
         self.out_dim = num_bessel
         self.apply_cutoff = apply_cutoff
@@ -541,7 +559,6 @@ class InteractionBlock(torch.nn.Module):
 
 
 nonlinearities = {1: torch.nn.functional.silu, -1: torch.tanh}
-
 
 @compile_mode("script")
 class RealAgnosticInteractionBlock(InteractionBlock):
