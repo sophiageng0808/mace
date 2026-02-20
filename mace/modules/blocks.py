@@ -8,6 +8,7 @@ from abc import abstractmethod
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 import torch.nn.functional
 from e3nn import nn, o3
 from e3nn.util.jit import compile_mode
@@ -34,6 +35,9 @@ from .radial import (
     PolynomialCutoff,
     RadialMLP,
     SoftTransform,
+    SoftCoreTransform,
+    InverseSoftplusTransform,
+    QuadraticSoftcapTransform,
 )
 
 
@@ -349,10 +353,23 @@ class RadialEmbeddingBlock(torch.nn.Module):
             self.bessel_fn = GaussianBasis(r_max=r_max, num_basis=num_bessel)
         elif radial_type == "chebyshev":
             self.bessel_fn = ChebychevBasis(r_max=r_max, num_basis=num_bessel)
+
+        # -----------------------------
+        # NEW: extended distance_transform options
+        # -----------------------------
         if distance_transform == "Agnesi":
             self.distance_transform = AgnesiTransform()
         elif distance_transform == "Soft":
             self.distance_transform = SoftTransform()
+        elif distance_transform == "SoftCore":
+            # defaults: eps=1e-3, mode="sqrt"
+            self.distance_transform = SoftCoreTransform()
+        elif distance_transform == "InverseSoftplus":
+            self.distance_transform = InverseSoftplusTransform()
+        elif distance_transform == "QuadraticSoftcap":
+            self.distance_transform = QuadraticSoftcapTransform()
+        # else: "None" -> no distance_transform attribute
+
         self.cutoff_fn = PolynomialCutoff(r_max=r_max, p=num_polynomial_cutoff)
         self.out_dim = num_bessel
         self.apply_cutoff = apply_cutoff
@@ -542,7 +559,6 @@ class InteractionBlock(torch.nn.Module):
 
 nonlinearities = {1: torch.nn.functional.silu, -1: torch.tanh}
 
-
 @compile_mode("script")
 class RealAgnosticInteractionBlock(InteractionBlock):
     def _setup(self) -> None:
@@ -644,7 +660,6 @@ class RealAgnosticInteractionBlock(InteractionBlock):
             self.reshape(message),
             None,
         )  # [n_nodes, channels, (lmax + 1)**2]
-
 
 @compile_mode("script")
 class RealAgnosticResidualInteractionBlock(InteractionBlock):

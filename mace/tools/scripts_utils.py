@@ -240,10 +240,20 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
     def radial_to_transform(radial):
         if not hasattr(radial, "distance_transform"):
             return None
+
+        # existing transforms
         if radial.distance_transform.__class__.__name__ == "AgnesiTransform":
             return "Agnesi"
         if radial.distance_transform.__class__.__name__ == "SoftTransform":
             return "Soft"
+
+        if radial.distance_transform.__class__.__name__ == "SoftCoreTransform":
+            return "SoftCore"
+        if radial.distance_transform.__class__.__name__ == "InverseSoftplusTransform":
+            return "InverseSoftplus"
+        if radial.distance_transform.__class__.__name__ == "QuadraticSoftcapTransform":
+            return "QuadraticSoftcap"
+
         return radial.distance_transform.__class__.__name__
 
     scale = model.scale_shift.scale

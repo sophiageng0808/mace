@@ -79,6 +79,11 @@ class MACE(torch.nn.Module):
         oeq_config: Optional[Dict[str, Any]] = None,
         lammps_mliap: Optional[bool] = False,
         readout_cls: Optional[Type[NonLinearReadoutBlock]] = NonLinearReadoutBlock,
+        softcap_kind: str = "none",
+        softcap_eps: float = 1e-3,
+        softcap_concat: bool = True,
+        softcap_apply_env: bool = True,
+        # ---------------------------------------------------------------------
     ):
         super().__init__()
         self.register_buffer(
@@ -103,6 +108,11 @@ class MACE(torch.nn.Module):
         self.use_so3 = use_so3
         self.use_last_readout_only = use_last_readout_only
         self.use_edge_irreps_first = use_edge_irreps_first
+
+        self.softcap_kind = softcap_kind
+        self.softcap_eps = softcap_eps
+        self.softcap_concat = softcap_concat
+        self.softcap_apply_env = softcap_apply_env
 
         # Embedding
         node_attr_irreps = o3.Irreps([(num_elements, (0, 1))])
@@ -135,6 +145,11 @@ class MACE(torch.nn.Module):
             radial_type=radial_type,
             distance_transform=distance_transform,
             apply_cutoff=apply_cutoff,
+            softcap_kind=softcap_kind,
+            softcap_eps=softcap_eps,
+            softcap_concat=softcap_concat,
+            softcap_apply_env=softcap_apply_env,
+            # -------------------------------------------------------------
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
         if pair_repulsion:
@@ -147,7 +162,6 @@ class MACE(torch.nn.Module):
             sh_irreps = o3.Irreps.spherical_harmonics(max_ell, p=1)
         num_features = hidden_irreps.count(o3.Irrep(0, 1))
 
-        # interaction_irreps = (sh_irreps * num_features).sort()[0].simplify()
         def generate_irreps(l):
             str_irrep = "+".join([f"1x{i}e+1x{i}o" for i in range(l + 1)])
             return o3.Irreps(str_irrep)
@@ -312,9 +326,8 @@ class MACE(torch.nn.Module):
         ]
         e0 = scatter_sum(
             src=node_e0, index=data["batch"], dim=0, dim_size=num_graphs
-        ).to(
-            vectors.dtype
-        )  # [n_graphs, n_heads]
+        ).to(vectors.dtype)  # [n_graphs, n_heads]
+
         # Embeddings
         node_feats = self.node_embedding(data["node_attrs"])
         edge_attrs = self.spherical_harmonics(vectors)
@@ -492,9 +505,7 @@ class ScaleShiftMACE(MACE):
         ]
         e0 = scatter_sum(
             src=node_e0, index=data["batch"], dim=0, dim_size=num_graphs
-        ).to(
-            vectors.dtype
-        )  # [n_graphs, num_heads]
+        ).to(vectors.dtype)  # [n_graphs, num_heads]
 
         # Embeddings
         node_feats = self.node_embedding(data["node_attrs"])
@@ -649,7 +660,12 @@ class AtomicDipolesMACE(torch.nn.Module):
         radial_MLP: Optional[List[int]] = None,
         cueq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
         oeq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
-        edge_irreps: Optional[o3.Irreps] = None,  # pylint: disable=unused-argument
+        edge_irreps: Optional[o3.Irreps] = None,  # pylint: disable=unuse
+        softcap_kind: str = "none",  # pylint: disable=unused-argument
+        softcap_eps: float = 1e-3,  # pylint: disable=unused-argument
+        softcap_concat: bool = True,  # pylint: disable=unused-argument
+        softcap_apply_env: bool = True,  # pylint: disable=unused-argument
+        # ---------------------------------------------------------------------
     ):
         super().__init__()
         self.register_buffer(
@@ -672,6 +688,10 @@ class AtomicDipolesMACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            softcap_kind=softcap_kind,
+            softcap_eps=softcap_eps,
+            softcap_concat=softcap_concat,
+            softcap_apply_env=softcap_apply_env,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
@@ -809,9 +829,7 @@ class AtomicDipolesMACE(torch.nn.Module):
             dipoles.append(node_dipoles)
 
         # Compute the dipoles
-        contributions_dipoles = torch.stack(
-            dipoles, dim=-1
-        )  # [n_nodes,3,n_contributions]
+        contributions_dipoles = torch.stack(dipoles, dim=-1)  # [n_nodes,3,n_contributions]
         atomic_dipoles = torch.sum(contributions_dipoles, dim=-1)  # [n_nodes,3]
         total_dipole = scatter_sum(
             src=atomic_dipoles,
@@ -867,6 +885,10 @@ class AtomicDielectricMACE(torch.nn.Module):
         dipole_only: Optional[bool] = True,  # pylint: disable=unused-argument
         use_polarizability: Optional[bool] = True,  # pylint: disable=unused-argument
         means_stds: Optional[Dict[str, torch.Tensor]] = None,  # pylint: disable=W0613
+        softcap_kind: str = "none",  # pylint: disable=unused-argument
+        softcap_eps: float = 1e-3,  # pylint: disable=unused-argument
+        softcap_concat: bool = True,  # pylint: disable=unused-argument
+        softcap_apply_env: bool = True,  # pylint: disable=unused-argument
     ):
         super().__init__()
         self.register_buffer(
@@ -880,14 +902,10 @@ class AtomicDielectricMACE(torch.nn.Module):
         # Predefine buffers to be TorchScript-safe
         self.register_buffer("dipole_mean", torch.zeros(3))
         self.register_buffer("dipole_std", torch.ones(3))
-        self.register_buffer(
-            "polarizability_mean", torch.zeros(3, 3)
-        )  # 3x3 matrix flattened
+        self.register_buffer("polarizability_mean", torch.zeros(3, 3))
         self.use_polarizability = use_polarizability
         self.register_buffer("polarizability_std", torch.ones(3, 3))
         self.register_buffer("change_of_basis", get_change_of_basis())
-        # self.register_buffer("mean_polarizability_sh", torch.zeros(6))
-        # self.register_buffer("std_polarizability_sh", torch.ones(6))
         if means_stds is not None:
             if "dipole_mean" in means_stds:
                 self.dipole_mean.data.copy_(means_stds["dipole_mean"])
@@ -897,13 +915,7 @@ class AtomicDielectricMACE(torch.nn.Module):
                 self.polarizability_mean.data.copy_(means_stds["polarizability_mean"])
             if "polarizability_std" in means_stds:
                 self.polarizability_std.data.copy_(means_stds["polarizability_std"])
-            # if "mean_polarizability_sh" in means_stds:
-            #    self.mean_polarizability_sh.data.copy_(means_stds["mean_polarizability_sh"])
-            # if "std_polarizability_sh" in means_stds:
-            #    self.std_polarizability_sh.data.copy_(means_stds["std_polarizability_sh"])'''
         assert atomic_energies is None
-        # self.use_polarizability = use_polarizability
-        # self.use_dipole = use_dipole
 
         # Embedding
         node_attr_irreps = o3.Irreps([(num_elements, (0, 1))])
@@ -916,6 +928,10 @@ class AtomicDielectricMACE(torch.nn.Module):
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
             radial_type=radial_type,
+            softcap_kind=softcap_kind,
+            softcap_eps=softcap_eps,
+            softcap_concat=softcap_concat,
+            softcap_apply_env=softcap_apply_env,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
@@ -941,7 +957,6 @@ class AtomicDielectricMACE(torch.nn.Module):
         )
         self.interactions = torch.nn.ModuleList([inter])
 
-        # Use the appropriate self connection at the first layer
         use_sc_first = False
         if "Residual" in str(interaction_cls_first):
             use_sc_first = True
@@ -963,16 +978,10 @@ class AtomicDielectricMACE(torch.nn.Module):
 
         for i in range(num_interactions - 1):
             if i == num_interactions - 2:
-                # does it always do polar and dipole together?
                 assert (
                     len(hidden_irreps) > 1
                 ), "To predict dipoles use at least l=1 hidden_irreps"
-                # hidden_irreps_out = str(
-                #     hidden_irreps[1]
-                # )  # Select only l=1 vectors for last layer
-                hidden_irreps_out = (
-                    hidden_irreps  # this is different in the AtomicDipoleMACE
-                )
+                hidden_irreps_out = hidden_irreps
             else:
                 hidden_irreps_out = hidden_irreps
             inter = interaction_cls(
@@ -1003,13 +1012,10 @@ class AtomicDielectricMACE(torch.nn.Module):
                         use_polarizability=True,
                     )
                 )
-                # print("Nonlinear irrpes: ", hidden_irreps_out, MLP_irreps)
-                # exit()
             else:
                 self.readouts.append(
                     LinearDipolePolarReadoutBlock(
                         hidden_irreps,
-                        # use_charge=True,
                         use_polarizability=True,
                     )
                 )
@@ -1083,15 +1089,10 @@ class AtomicDielectricMACE(torch.nn.Module):
             else:
                 node_dipoles = node_out[:, 1:4]
                 dipoles.append(node_dipoles)
-                # raise ValueError(
-                #    "Polarizability is not used in this model, but it is required for the AtomicDielectricMACE."
-                # )
-        contributions_dipoles = torch.stack(
-            dipoles, dim=-1
-        )  # [n_nodes,3,n_contributions]
+
+        contributions_dipoles = torch.stack(dipoles, dim=-1)  # [n_nodes,3,n_contributions]
         atomic_dipoles = torch.sum(contributions_dipoles, dim=-1)  # [n_nodes,3]
         atomic_charges = torch.stack(charges, dim=-1).sum(-1)  # [n_nodes,]
-        # The idea is to normalize the charges so that they sum to the net charge in the system before predicting the dipole.
         total_charge_excess = scatter_mean(
             src=atomic_charges, index=data["batch"], dim_size=num_graphs
         ) - (data["total_charge"] / num_atoms)
@@ -1103,7 +1104,7 @@ class AtomicDielectricMACE(torch.nn.Module):
             dim_size=num_graphs,
         )  # [n_graphs,3]
         baseline = compute_fixed_charge_dipole_polar(
-            charges=atomic_charges,  # or data["charges"], ?????
+            charges=atomic_charges,
             positions=data["positions"],
             batch=data["batch"],
             num_graphs=num_graphs,
@@ -1111,7 +1112,6 @@ class AtomicDielectricMACE(torch.nn.Module):
         total_dipole = total_dipole + baseline
 
         if self.use_polarizability:
-            # Compute the polarizabilities
             contributions_polarizabilities = torch.stack(
                 polarizabilities, dim=-1
             )  # [n_nodes,6,n_contributions]
@@ -1191,6 +1191,10 @@ class EnergyDipolesMACE(torch.nn.Module):
         cueq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
         oeq_config: Optional[Dict[str, Any]] = None,  # pylint: disable=unused-argument
         edge_irreps: Optional[o3.Irreps] = None,  # pylint: disable=unused-argument
+        softcap_kind: str = "none",  # pylint: disable=unused-argument
+        softcap_eps: float = 1e-3,  # pylint: disable=unused-argument
+        softcap_concat: bool = True,  # pylint: disable=unused-argument
+        softcap_apply_env: bool = True,  # pylint: disable=unused-argument
     ):
         super().__init__()
         self.register_buffer(
@@ -1210,6 +1214,10 @@ class EnergyDipolesMACE(torch.nn.Module):
             r_max=r_max,
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
+            softcap_kind=softcap_kind,
+            softcap_eps=softcap_eps,
+            softcap_concat=softcap_concat,
+            softcap_apply_env=softcap_apply_env,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
@@ -1370,7 +1378,6 @@ class EnergyDipolesMACE(torch.nn.Module):
                 node_attrs=data["node_attrs"],
             )
             node_out = readout(node_feats).squeeze(-1)  # [n_nodes, ]
-            # node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
             node_energies = node_out[:, 0]
             energy = scatter_sum(
                 src=node_energies, index=data["batch"], dim=-1, dim_size=num_graphs
@@ -1384,9 +1391,7 @@ class EnergyDipolesMACE(torch.nn.Module):
         total_energy = torch.sum(contributions, dim=-1)  # [n_graphs, ]
         node_energy_contributions = torch.stack(node_energies_list, dim=-1)
         node_energy = torch.sum(node_energy_contributions, dim=-1)  # [n_nodes, ]
-        contributions_dipoles = torch.stack(
-            dipoles, dim=-1
-        )  # [n_nodes,3,n_contributions]
+        contributions_dipoles = torch.stack(dipoles, dim=-1)  # [n_nodes,3,n_contributions]
         atomic_dipoles = torch.sum(contributions_dipoles, dim=-1)  # [n_nodes,3]
         total_dipole = scatter_sum(
             src=atomic_dipoles,

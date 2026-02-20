@@ -173,6 +173,40 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
     )
+
+    parser.add_argument(
+        "--softcap_kind",
+        help=(
+            "Enable soft-capping style distance features. "
+            "'none' disables. "
+            "'inv_softplus' adds inverse-softplus-like distance feature. "
+            "'quadratic' adds 1/sqrt(r^2+eps^2) feature. "
+            "'log_radial' applies r' = ln(r+eps) transform (see implementation)."
+        ),
+        type=str,
+        default="none",
+        choices=["none", "inv_softplus", "quadratic", "log_radial"],
+    )
+    parser.add_argument(
+        "--softcap_eps",
+        help="Epsilon used for soft-capping features / transforms (must be > 0).",
+        type=float,
+        default=1e-3,
+    )
+    parser.add_argument(
+        "--softcap_concat",
+        help="If True, concatenate the softcap feature to the radial basis embedding.",
+        type=str2bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--softcap_apply_env",
+        help="If True, multiply the concatenated feature(s) by the envelope/cutoff factor f_env(r).",
+        type=str2bool,
+        default=True,
+    )
+    # -------------------------------------------------------------------------
+
     parser.add_argument(
         "--distance_transform",
         help="use distance transform for radial basis functions",
@@ -1000,6 +1034,10 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "start_swa",
             "energy_weight",
             "forces_weight",
+            "softcap_kind",
+            "softcap_eps",
+            "softcap_concat",
+            "softcap_apply_env",
         ],
     )
     return parser

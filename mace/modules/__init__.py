@@ -42,7 +42,16 @@ from .models import (
     EnergyDipolesMACE,
     ScaleShiftMACE,
 )
-from .radial import BesselBasis, GaussianBasis, PolynomialCutoff, ZBLBasis
+from .radial import (
+    BesselBasis,
+    GaussianBasis,
+    PolynomialCutoff,
+    ZBLBasis,
+    # NEW: export your new distance transforms so they’re importable as mace.modules.*
+    SoftCoreTransform,
+    InverseSoftplusTransform,
+    QuadraticSoftcapTransform,
+)
 from .symmetric_contraction import SymmetricContraction
 from .utils import (
     compute_avg_num_neighbors,
@@ -102,6 +111,10 @@ __all__ = [
     "PolynomialCutoff",
     "BesselBasis",
     "GaussianBasis",
+    # NEW: make the transforms visible from the top-level modules package
+    "SoftCoreTransform",
+    "InverseSoftplusTransform",
+    "QuadraticSoftcapTransform",
     "MACE",
     "ScaleShiftMACE",
     "AtomicDipolesMACE",

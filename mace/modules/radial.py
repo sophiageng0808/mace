@@ -9,6 +9,7 @@ import logging
 import ase
 import numpy as np
 import torch
+import torch.nn.functional as F 
 from e3nn.util.jit import compile_mode
 
 from mace.tools.scatter import scatter_sum
@@ -357,6 +358,106 @@ class SoftTransform(torch.nn.Module):
     def __repr__(self):
         return f"{self.__class__.__name__}(alpha={self.alpha.item():.4f})"
 
+
+@compile_mode("script")
+class SoftCoreTransform(torch.nn.Module):
+    """
+    Soft-core distance transform to avoid singular behavior at small r.
+
+    Modes:
+      - "add":      r_eff = r + eps
+      - "sqrt":     r_eff = sqrt(r^2 + eps^2)
+      - "softplus": r_eff = eps + softplus(r - eps)   (smoothly enforces r_eff >= eps)
+
+    Signature matches other transforms: forward(x, node_attrs, edge_index, atomic_numbers).
+    """
+
+    def __init__(self, eps: float = 1e-3, mode: str = "sqrt"):
+        super().__init__()
+        self.register_buffer("eps", torch.tensor(eps, dtype=torch.get_default_dtype()))
+        self.mode = mode
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        node_attrs: torch.Tensor,   # unused, kept for API compatibility
+        edge_index: torch.Tensor,   # unused, kept for API compatibility
+        atomic_numbers: torch.Tensor,  # unused, kept for API compatibility
+    ) -> torch.Tensor:
+        eps = self.eps
+        if self.mode == "add":
+            return x + eps
+        if self.mode == "softplus":
+            # ensures output >= eps, with smooth transition near eps
+            return eps + F.softplus(x - eps)
+        # default: "sqrt"
+        return torch.sqrt(x * x + eps * eps)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(eps={self.eps.item():.3e}, mode='{self.mode}')"
+
+
+@compile_mode("script")
+class InverseSoftplusTransform(torch.nn.Module):
+    """
+    A very conservative "soft-capping" style transform that smoothly increases
+    the effective distance at very small r, without hard clamps.
+
+    We implement:
+        r_eff = eps + softplus(r - eps)
+    (This is effectively the same as SoftCoreTransform(mode='softplus'), but kept
+     as a named option to match your CLI/config choices.)
+    """
+
+    def __init__(self, eps: float = 1e-3):
+        super().__init__()
+        self.register_buffer("eps", torch.tensor(eps, dtype=torch.get_default_dtype()))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        node_attrs: torch.Tensor,   # unused
+        edge_index: torch.Tensor,   # unused
+        atomic_numbers: torch.Tensor,  # unused
+    ) -> torch.Tensor:
+        eps = self.eps
+        return eps + F.softplus(x - eps)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(eps={self.eps.item():.3e})"
+
+
+@compile_mode("script")
+class QuadraticSoftcapTransform(torch.nn.Module):
+    """
+    Smoothly pushes small distances away from 0 with a quadratic floor:
+
+        r_eff = sqrt(r^2 + eps^2)
+
+    (Kept distinct so you can map 'quadratic' -> this explicitly.)
+    """
+
+    def __init__(self, eps: float = 1e-3):
+        super().__init__()
+        self.register_buffer("eps", torch.tensor(eps, dtype=torch.get_default_dtype()))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        node_attrs: torch.Tensor,   # unused
+        edge_index: torch.Tensor,   # unused
+        atomic_numbers: torch.Tensor,  # unused
+    ) -> torch.Tensor:
+        eps = self.eps
+        return torch.sqrt(x * x + eps * eps)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(eps={self.eps.item():.3e})"
+
+
+# =============================================================================
+# Existing radial MLP
+# =============================================================================
 
 class RadialMLP(torch.nn.Module):
     """

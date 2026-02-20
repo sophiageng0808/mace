@@ -75,6 +75,30 @@ def configure_model(
     if args.embedding_specs is not None:
         logging.info("Using embedding specifications from command line arguments")
         logging.info(f"Embedding specifications: {args.embedding_specs}")
+
+    # These args are added in arg_parser.py; this block keeps backwards compat if
+    # a user loads an older checkpoint/config without them.
+    if not hasattr(args, "softcap_kind"):
+        args.softcap_kind = "none"
+    if not hasattr(args, "softcap_eps"):
+        args.softcap_eps = 1e-3
+    if not hasattr(args, "softcap_concat"):
+        args.softcap_concat = True
+    if not hasattr(args, "softcap_apply_env"):
+        args.softcap_apply_env = True
+
+    if args.softcap_kind != "none":
+        if args.softcap_eps is None or args.softcap_eps <= 0.0:
+            raise ValueError("--softcap_eps must be > 0 when --softcap_kind != none")
+        logging.info(
+            "Soft-capping enabled: kind=%s eps=%g concat=%s apply_env=%s",
+            args.softcap_kind,
+            args.softcap_eps,
+            args.softcap_concat,
+            args.softcap_apply_env,
+        )
+    # -------------------------------------------------------------------------
+
     # Build model
     if model_foundation is not None and args.model in [
         "MACE",
@@ -118,6 +142,11 @@ def configure_model(
         )
         model_config_foundation["heads"] = heads
         model_config = model_config_foundation
+
+        model_config["softcap_kind"] = getattr(args, "softcap_kind", "none")
+        model_config["softcap_eps"] = getattr(args, "softcap_eps", 1e-3)
+        model_config["softcap_concat"] = getattr(args, "softcap_concat", True)
+        model_config["softcap_apply_env"] = getattr(args, "softcap_apply_env", True)
 
         logging.info("Model configuration extracted from foundation model")
         logging.info(f"Using {args.loss} loss function for fine-tuning")
@@ -185,6 +214,15 @@ def configure_model(
             use_reduced_cg=args.use_reduced_cg,
             use_so3=args.use_so3,
             cueq_config=cueq_config,
+            # -----------------------------------------------------------------
+            # NEW: pass soft-capping config into model construction
+            # (actual usage is implemented in modules/models/blocks/radial)
+            # -----------------------------------------------------------------
+            softcap_kind=args.softcap_kind,
+            softcap_eps=args.softcap_eps,
+            softcap_concat=args.softcap_concat,
+            softcap_apply_env=args.softcap_apply_env,
+            # -----------------------------------------------------------------
         )
         model_config_foundation = None
 
