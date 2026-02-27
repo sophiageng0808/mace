@@ -247,11 +247,6 @@ def _build_model(args, model_config, model_config_foundation, heads):  # pylint:
             args.interaction_first = "RealAgnosticInteractionBlock"
         return modules.ScaleShiftMACE(
             **model_config,
-            # --- NEW: pass cutoff options through to RadialEmbeddingBlock ---
-            cutoff_kind=model_config.get("cutoff_kind", "polynomial"),
-            cutoff_env_n=model_config.get("cutoff_env_n", 1),
-            cutoff_env_eps=model_config.get("cutoff_env_eps", 1e-3),
-            # --------------------------------------------------------------
             pair_repulsion=args.pair_repulsion,
             distance_transform=args.distance_transform,
             correlation=args.correlation,
@@ -273,11 +268,6 @@ def _build_model(args, model_config, model_config_foundation, heads):  # pylint:
     if args.model == "ScaleShiftMACE":
         return modules.ScaleShiftMACE(
             **model_config,
-            # --- NEW: pass cutoff options through to RadialEmbeddingBlock ---
-            cutoff_kind=model_config.get("cutoff_kind", "polynomial"),
-            cutoff_env_n=model_config.get("cutoff_env_n", 1),
-            cutoff_env_eps=model_config.get("cutoff_env_eps", 1e-3),
-            # --------------------------------------------------------------
             pair_repulsion=args.pair_repulsion,
             distance_transform=args.distance_transform,
             correlation=args.correlation,
