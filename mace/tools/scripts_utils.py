@@ -253,6 +253,44 @@ def _cutoff_config_from_module(cutoff_module: Any) -> Dict[str, Any]:
     return cfg
 
 
+def _repulsion_config_from_model(model: torch.nn.Module) -> Dict[str, Any]:
+    cfg: Dict[str, Any] = {}
+    if not hasattr(model, "pair_repulsion_fn"):
+        cfg["pair_repulsion"] = False
+        return cfg
+
+    rep = model.pair_repulsion_fn
+    cfg["pair_repulsion"] = True
+    cfg["pair_repulsion_kinds"] = getattr(rep, "kinds", None)
+    cfg["pair_repulsion_mode"] = int(getattr(rep, "mode", 0))
+
+    zbl = getattr(rep, "zbl", None)
+    if zbl is not None and hasattr(zbl, "p"):
+        try:
+            cfg["zbl_p"] = int(zbl.p)
+        except Exception:  # pylint: disable=broad-except
+            cfg["zbl_p"] = zbl.p
+    if zbl is not None and hasattr(zbl, "r_min"):
+        cfg["pair_repulsion_r_min"] = float(zbl.r_min)
+
+    r12 = getattr(rep, "r12", None)
+    if r12 is not None and hasattr(r12, "c12"):
+        cfg["r12_scale"] = float(r12.c12)
+    if r12 is not None and hasattr(r12, "r12_cutoff"):
+        try:
+            cutoff_val = float(r12.r12_cutoff.item())
+        except Exception:  # pylint: disable=broad-except
+            cutoff_val = float(r12.r12_cutoff)
+        cfg["r12_cutoff"] = None if cutoff_val <= 0 else cutoff_val
+    if r12 is not None and hasattr(r12, "r12_switch_width"):
+        try:
+            width_val = float(r12.r12_switch_width.item())
+        except Exception:  # pylint: disable=broad-except
+            width_val = float(r12.r12_switch_width)
+        cfg["r12_switch_width"] = None if width_val <= 0 else width_val
+    return cfg
+
+
 def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
     if model.__class__.__name__ not in [
         "ScaleShiftMACE",
@@ -300,6 +338,8 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
     cutoff_cfg: Dict[str, Any] = {}
     if hasattr(model, "radial_embedding") and hasattr(model.radial_embedding, "cutoff_fn"):
         cutoff_cfg = _cutoff_config_from_module(model.radial_embedding.cutoff_fn)
+
+    repulsion_cfg = _repulsion_config_from_model(model)
 
     config: Dict[str, Any] = {
         "r_max": model.r_max.item(),
@@ -357,12 +397,12 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         ),
         "apply_cutoff": model.apply_cutoff if hasattr(model, "apply_cutoff") else True,
         "radial_MLP": extract_radial_MLP(model),
-        "pair_repulsion": hasattr(model, "pair_repulsion_fn"),
         "distance_transform": radial_to_transform(model.radial_embedding),
         "atomic_inter_scale": scale.cpu().numpy(),
         "atomic_inter_shift": shift.cpu().numpy(),
         "heads": heads,
         **cutoff_cfg,
+        **repulsion_cfg,
     }
 
     if model.__class__.__name__ == "AtomicDielectricMACE":
@@ -578,7 +618,34 @@ def convert_from_json_format(dict_input):
     dict_output["correlation"] = int(dict_input["correlation"])
     dict_output["radial_type"] = dict_input["radial_type"]
     dict_output["radial_MLP"] = ast.literal_eval(dict_input["radial_MLP"])
-    dict_output["pair_repulsion"] = ast.literal_eval(dict_input["pair_repulsion"])
+    if "pair_repulsion" in dict_input:
+        if isinstance(dict_input["pair_repulsion"], str):
+            dict_output["pair_repulsion"] = ast.literal_eval(dict_input["pair_repulsion"])
+        else:
+            dict_output["pair_repulsion"] = bool(dict_input["pair_repulsion"])
+    if "pair_repulsion_kinds" in dict_input:
+        kinds = dict_input["pair_repulsion_kinds"]
+        if isinstance(kinds, str):
+            kinds = ast.literal_eval(kinds)
+        dict_output["pair_repulsion_kinds"] = kinds
+    if "pair_repulsion_mode" in dict_input:
+        dict_output["pair_repulsion_mode"] = int(dict_input["pair_repulsion_mode"])
+    if "zbl_p" in dict_input:
+        dict_output["zbl_p"] = int(dict_input["zbl_p"])
+    if "r12_scale" in dict_input:
+        dict_output["r12_scale"] = float(dict_input["r12_scale"])
+    if "r12_cutoff" in dict_input:
+        dict_output["r12_cutoff"] = (
+            None if dict_input["r12_cutoff"] in (None, "None") else float(dict_input["r12_cutoff"])
+        )
+    if "r12_switch_width" in dict_input:
+        dict_output["r12_switch_width"] = (
+            None
+            if dict_input["r12_switch_width"] in (None, "None")
+            else float(dict_input["r12_switch_width"])
+        )
+    if "pair_repulsion_r_min" in dict_input:
+        dict_output["pair_repulsion_r_min"] = float(dict_input["pair_repulsion_r_min"])
     dict_output["distance_transform"] = dict_input["distance_transform"]
     dict_output["atomic_inter_scale"] = float(dict_input["atomic_inter_scale"])
     dict_output["atomic_inter_shift"] = float(dict_input["atomic_inter_shift"])

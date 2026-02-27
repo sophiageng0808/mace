@@ -132,12 +132,24 @@ class MACELES(ScaleShiftMACE):
         if self.apply_cutoff:
             cutoff = None
 
-        if hasattr(self, "pair_repulsion"):
-            pair_node_energy = self.pair_repulsion_fn(
-                lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+        if hasattr(self, "pair_repulsion_fn"):
+            pair_node_e_scalar = self.pair_repulsion_fn(
+                lengths=lengths,
+                node_attrs=data["node_attrs"],
+                edge_index=data["edge_index"],
+                atomic_numbers=self.atomic_numbers,
+                r_max=self.r_max,
             )
+            if pair_node_e_scalar.dim() == 2 and pair_node_e_scalar.shape[-1] == 1:
+                pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
             if is_lammps:
-                pair_node_energy = pair_node_energy[: lammps_natoms[0]]
+                pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
+            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
+                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
+                    -1, node_e0.shape[1]
+                )
+            else:
+                pair_node_energy = pair_node_e_scalar
         else:
             pair_node_energy = torch.zeros_like(node_e0)
 

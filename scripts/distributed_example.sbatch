@@ -25,10 +25,12 @@ srun python mace/scripts/run_train.py \
     --num_workers=8 \
     --batch_size=20 \
     --valid_batch_size=80 \
-    --max_num_epochs=100 \
+    --max_num_epochs=400 \
     --loss='weighted' \
     --error_table='PerAtomRMSE' \
     --default_dtype='float32' \
     --device='cuda' \
+    --wandb \
+    --wandb_name='model' \
     --distributed \
     --seed=2222 \

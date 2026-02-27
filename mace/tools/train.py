@@ -23,6 +23,7 @@ from torch_ema import ExponentialMovingAverage
 from torchmetrics import Metric
 
 from mace.cli.visualise_train import TrainingPlotter
+from mace.modules.radial import BesselBasis
 
 from . import torch_geometric
 from .checkpoint import CheckpointHandler, CheckpointState
@@ -44,6 +45,61 @@ class SWAContainer:
     scheduler: SWALR
     start: int
     loss_fn: torch.nn.Module
+
+
+def _resolve_base_model(model: torch.nn.Module) -> torch.nn.Module:
+    return model.module if hasattr(model, "module") else model
+
+
+def _wandb_log_bessel_embedding(
+    model: torch.nn.Module, tag: str, device: torch.device
+) -> None:
+    base_model = _resolve_base_model(model)
+    radial_embedding = getattr(base_model, "radial_embedding", None)
+    if radial_embedding is None:
+        return
+    bessel_fn = getattr(radial_embedding, "bessel_fn", None)
+    if not isinstance(bessel_fn, BesselBasis):
+        return
+    r_max = getattr(bessel_fn, "r_max", None)
+    if r_max is None and hasattr(base_model, "r_max"):
+        r_max = base_model.r_max
+    if r_max is None:
+        return
+    r_max_value = float(r_max.detach().cpu().item()) if torch.is_tensor(r_max) else float(r_max)
+    if r_max_value <= 0:
+        return
+    num_basis = (
+        int(bessel_fn.bessel_weights.numel())
+        if hasattr(bessel_fn, "bessel_weights")
+        else 0
+    )
+    if num_basis <= 0:
+        return
+
+    r = torch.linspace(1e-3, r_max_value, steps=256, device=device).unsqueeze(-1)
+    with torch.no_grad():
+        values = bessel_fn(r).detach().cpu().numpy()
+    r_cpu = r.squeeze(-1).detach().cpu().numpy()
+
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logging.warning("matplotlib not available; skipping Bessel embedding plot.")
+        return
+    import wandb
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    for idx in range(values.shape[1]):
+        ax.plot(r_cpu, values[:, idx])
+    ax.set_xlabel("r")
+    ax.set_ylabel("Bessel basis")
+    ax.set_title(f"Bessel embedding (r_max={r_max_value:g}, n={num_basis})")
+    ax.set_xlim(0.0, r_max_value)
+    ax.grid(True, alpha=0.2)
+    fig.tight_layout()
+    wandb.log({tag: wandb.Image(fig)})
+    plt.close(fig)
 
 
 def valid_err_log(
@@ -204,6 +260,13 @@ def train(
         )
     valid_loss = valid_loss_head  # consider only the last head for the checkpoint
 
+    if log_wandb and rank == 0:
+        _wandb_log_bessel_embedding(
+            distributed_model if distributed_model is not None else model,
+            "bessel_embedding/start",
+            device,
+        )
+
     # variable used for broadcast by rank == 0 if epoch loop is exited early, e.g. patience
     exit_now = torch.zeros(1, device=device) if distributed else None
     while epoch < max_num_epochs:
@@ -345,6 +408,13 @@ def train(
         epoch += 1
 
     logging.info("Training complete")
+
+    if log_wandb and rank == 0:
+        _wandb_log_bessel_embedding(
+            distributed_model if distributed_model is not None else model,
+            "bessel_embedding/end",
+            device,
+        )
 
 
 def train_one_epoch(

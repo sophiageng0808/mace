@@ -11,6 +11,33 @@ from mace.tools.scripts_utils import extract_config_mace_model
 from mace.tools.utils import AtomicNumberTable
 
 
+def _get_repulsion_kwargs(args):
+    pair_repulsion = bool(getattr(args, "pair_repulsion", False))
+    if not pair_repulsion:
+        return {}
+
+    kinds = getattr(args, "pair_repulsion_kinds", None)
+    if kinds is None:
+        kinds = ["zbl"]
+    elif isinstance(kinds, str):
+        kinds = [k.strip() for k in kinds.split(",") if k.strip()]
+
+    r12_cutoff = getattr(args, "r12_cutoff", None)
+    if r12_cutoff is not None:
+        r12_cutoff = float(r12_cutoff)
+
+    return dict(
+        pair_repulsion=True,
+        pair_repulsion_kinds=kinds,
+        zbl_p=int(getattr(args, "zbl_p", 6)),
+        r12_scale=float(getattr(args, "r12_scale", 1.0)),
+        r12_cutoff=r12_cutoff,
+        r12_switch_width=getattr(args, "r12_switch_width", None),
+        pair_repulsion_mode=int(getattr(args, "pair_repulsion_mode", 0)),
+        pair_repulsion_r_min=float(getattr(args, "pair_repulsion_r_min", 0.2)),
+    )
+
+
 def configure_model(
     args,
     train_loader,
@@ -124,6 +151,10 @@ def configure_model(
         model_config_foundation["cutoff_kind"] = cutoff_kind
         model_config_foundation["cutoff_env_n"] = cutoff_env_n
         model_config_foundation["cutoff_env_eps"] = cutoff_env_eps
+
+        rep_kwargs = _get_repulsion_kwargs(args)
+        if rep_kwargs:
+            model_config_foundation.update(rep_kwargs)
 
         if args.foundation_model_elements:
             foundation_z_table = AtomicNumberTable(
@@ -279,6 +310,7 @@ def _determine_atomic_inter_shift(mean, heads):
 def _build_model(
     args, model_config, model_config_foundation, heads
 ):  # pylint: disable=too-many-return-statements
+    rep_kwargs = _get_repulsion_kwargs(args)
     if args.model == "MACE":
         if args.interaction_first not in [
             "RealAgnosticInteractionBlock",
@@ -288,7 +320,7 @@ def _build_model(
 
         return modules.ScaleShiftMACE(
             **model_config,
-            pair_repulsion=args.pair_repulsion,
+            **rep_kwargs,
             distance_transform=args.distance_transform,
             correlation=args.correlation,
             gate=modules.gate_dict[args.gate],
@@ -308,7 +340,7 @@ def _build_model(
     if args.model == "ScaleShiftMACE":
         return modules.ScaleShiftMACE(
             **model_config,
-            pair_repulsion=args.pair_repulsion,
+            **rep_kwargs,
             distance_transform=args.distance_transform,
             correlation=args.correlation,
             gate=modules.gate_dict[args.gate],
@@ -394,7 +426,7 @@ def _build_model(
         return MACELES(
             les_arguments=args.les_arguments,
             **model_config,
-            pair_repulsion=args.pair_repulsion,
+            **rep_kwargs,
             distance_transform=args.distance_transform,
             correlation=args.correlation,
             gate=modules.gate_dict[args.gate],

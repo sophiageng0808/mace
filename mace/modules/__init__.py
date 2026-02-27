@@ -58,8 +58,11 @@ from .radial import (
     ChebychevBasis,
     GaussianBasis,
     PolynomialCutoff,
+    PairRepulsionSwitch,
     RadialMLP,
     SoftCoreCutoff,
+    R12Repulsion,
+    ZBLRepulsion,
     ZBLBasis,
 )
 
@@ -110,6 +113,9 @@ __all__ = [
     "AtomicEnergiesBlock",
     "RadialEmbeddingBlock",
     "ZBLBasis",
+    "ZBLRepulsion",
+    "R12Repulsion",
+    "PairRepulsionSwitch",
     "LinearNodeEmbeddingBlock",
     "LinearReadoutBlock",
     "EquivariantProductBasisBlock",

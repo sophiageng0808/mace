@@ -192,9 +192,53 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--pair_repulsion",
-        help="use pair repulsion term with ZBL potential",
+        help="enable pair repulsion term (configured by --pair_repulsion_kinds)",
         action="store_true",
         default=False,
+    )
+    parser.add_argument(
+        "--pair_repulsion_kinds",
+        help="which pair repulsion terms to include (space-separated). Options: zbl, r12",
+        nargs="+",
+        default=["zbl"],
+        choices=["zbl", "r12"],
+    )
+    parser.add_argument(
+        "--pair_repulsion_mode",
+        help="combination mode for PairRepulsionSwitch (INT). 0=sum, 1=zbl-only, 2=r12-only, 3=both",
+        type=int,
+        default=0,
+        choices=[0, 1, 2, 3],
+    )
+    parser.add_argument(
+        "--pair_repulsion_r_min",
+        help="minimum distance (Ang) clamp used in repulsion to avoid singularities",
+        type=float,
+        default=0.2,
+    )
+    parser.add_argument(
+        "--zbl_p",
+        help="polynomial cutoff exponent p for ZBL envelope",
+        type=int,
+        default=6,
+    )
+    parser.add_argument(
+        "--r12_scale",
+        help="scale factor / prefactor for r^-12 repulsion term",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--r12_cutoff",
+        help="optional cutoff radius (Ang) for r^-12 repulsion (None = no extra cutoff)",
+        type=check_float_or_none,
+        default=None,
+    )
+    parser.add_argument(
+        "--r12_switch_width",
+        help="optional switching width (Ang) for smoothly turning off r^-12 near cutoff",
+        type=check_float_or_none,
+        default=None,
     )
     parser.add_argument(
         "--distance_transform",

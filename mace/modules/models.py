@@ -12,7 +12,6 @@ from e3nn import o3
 from e3nn.util.jit import compile_mode
 
 from mace.modules.embeddings import GenericJointEmbedding
-from mace.modules.radial import ZBLBasis
 from mace.tools.scatter import scatter_mean, scatter_sum
 from mace.tools.torch_tools import get_change_of_basis, spherical_to_cartesian
 
@@ -28,6 +27,7 @@ from .blocks import (
     NonLinearDipoleReadoutBlock,
     NonLinearReadoutBlock,
     RadialEmbeddingBlock,
+    build_pair_repulsion,
     ScaleShiftBlock,
 )
 from .utils import (
@@ -62,6 +62,13 @@ class MACE(torch.nn.Module):
         correlation: Union[int, List[int]],
         gate: Optional[Callable],
         pair_repulsion: bool = False,
+        pair_repulsion_kinds: Optional[List[str]] = None,
+        pair_repulsion_mode: int = 0,
+        zbl_p: int = 6,
+        r12_scale: float = 1.0,
+        r12_cutoff: Optional[float] = None,
+        r12_switch_width: Optional[float] = None,
+        pair_repulsion_r_min: float = 0.2,
         apply_cutoff: bool = True,
         cutoff_kind: Optional[str] = None,
         cutoff_env_n: Optional[int] = None,
@@ -156,9 +163,20 @@ class MACE(torch.nn.Module):
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
+        # -------------------------
+        # Pair repulsion (ZBL / r12)
+        # -------------------------
         if pair_repulsion:
-            self.pair_repulsion_fn = ZBLBasis(p=num_polynomial_cutoff)
-            self.pair_repulsion = True
+            self.pair_repulsion_fn = build_pair_repulsion(
+                num_polynomial_cutoff=num_polynomial_cutoff,
+                pair_repulsion_kinds=pair_repulsion_kinds,
+                pair_repulsion_mode=pair_repulsion_mode,
+                zbl_p=zbl_p,
+                r12_scale=r12_scale,
+                r12_cutoff=r12_cutoff,
+                r12_switch_width=r12_switch_width,
+                pair_repulsion_r_min=pair_repulsion_r_min,
+            )
 
         if not use_so3:
             sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
@@ -347,15 +365,27 @@ class MACE(torch.nn.Module):
         if self.apply_cutoff:
             cutoff = None
 
-        if hasattr(self, "pair_repulsion"):
-            pair_node_energy = self.pair_repulsion_fn(
-                lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+        if hasattr(self, "pair_repulsion_fn"):
+            pair_node_e_scalar = self.pair_repulsion_fn(
+                lengths=lengths,
+                node_attrs=data["node_attrs"],
+                edge_index=data["edge_index"],
+                atomic_numbers=self.atomic_numbers,
+                r_max=self.r_max,
             )
+            if pair_node_e_scalar.dim() == 2 and pair_node_e_scalar.shape[-1] == 1:
+                pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
             if is_lammps:
-                pair_node_energy = pair_node_energy[: lammps_natoms[0]]
+                pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
+            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
+                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
+                    -1, node_e0.shape[1]
+                )
+            else:
+                pair_node_energy = pair_node_e_scalar
             pair_energy = scatter_sum(
-                src=pair_node_energy, index=data["batch"], dim=-1, dim_size=num_graphs
-            )  # [n_graphs,]
+                src=pair_node_energy, index=data["batch"], dim=0, dim_size=num_graphs
+            )  # [n_graphs,n_heads]
         else:
             pair_node_energy = torch.zeros_like(node_e0)
             pair_energy = torch.zeros_like(e0)
@@ -528,12 +558,24 @@ class ScaleShiftMACE(MACE):
         if self.apply_cutoff:
             cutoff = None
 
-        if hasattr(self, "pair_repulsion"):
-            pair_node_energy = self.pair_repulsion_fn(
-                lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+        if hasattr(self, "pair_repulsion_fn"):
+            pair_node_e_scalar = self.pair_repulsion_fn(
+                lengths=lengths,
+                node_attrs=data["node_attrs"],
+                edge_index=data["edge_index"],
+                atomic_numbers=self.atomic_numbers,
+                r_max=self.r_max,
             )
+            if pair_node_e_scalar.dim() == 2 and pair_node_e_scalar.shape[-1] == 1:
+                pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
             if is_lammps:
-                pair_node_energy = pair_node_energy[: lammps_natoms[0]]
+                pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
+            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
+                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
+                    -1, node_e0.shape[1]
+                )
+            else:
+                pair_node_energy = pair_node_e_scalar
         else:
             pair_node_energy = torch.zeros_like(node_e0)
 
