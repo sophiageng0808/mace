@@ -345,6 +345,10 @@ class RadialEmbeddingBlock(torch.nn.Module):
         radial_type: str = "bessel",
         distance_transform: str = "None",
         apply_cutoff: bool = True,
+        softcap_kind: str = "none",
+        softcap_eps: float = 1e-3,
+        softcap_concat: bool = True,
+        softcap_apply_env: bool = True,
     ):
         super().__init__()
         if radial_type == "bessel":
@@ -353,6 +357,11 @@ class RadialEmbeddingBlock(torch.nn.Module):
             self.bessel_fn = GaussianBasis(r_max=r_max, num_basis=num_bessel)
         elif radial_type == "chebyshev":
             self.bessel_fn = ChebychevBasis(r_max=r_max, num_basis=num_bessel)
+
+        self.softcap_kind = softcap_kind
+        self.softcap_eps = softcap_eps
+        self.softcap_concat = softcap_concat
+        self.softcap_apply_env = softcap_apply_env
 
         # -----------------------------
         # NEW: extended distance_transform options
@@ -371,8 +380,27 @@ class RadialEmbeddingBlock(torch.nn.Module):
         # else: "None" -> no distance_transform attribute
 
         self.cutoff_fn = PolynomialCutoff(r_max=r_max, p=num_polynomial_cutoff)
-        self.out_dim = num_bessel
+        self.out_dim = num_bessel + self._softcap_feature_dim()
         self.apply_cutoff = apply_cutoff
+
+    def _softcap_feature_dim(self) -> int:
+        if self.softcap_kind != "none" and self.softcap_concat:
+            return 1
+        return 0
+
+    def _softcap_feature(self, edge_lengths: torch.Tensor) -> torch.Tensor:
+        eps = torch.as_tensor(
+            self.softcap_eps,
+            dtype=edge_lengths.dtype,
+            device=edge_lengths.device,
+        )
+        if self.softcap_kind == "inv_softplus":
+            return 1.0 / (eps + torch.nn.functional.softplus(edge_lengths - eps))
+        if self.softcap_kind == "quadratic":
+            return 1.0 / torch.sqrt(edge_lengths * edge_lengths + eps * eps)
+        if self.softcap_kind == "log_radial":
+            return torch.log(edge_lengths + eps)
+        raise ValueError(f"Unknown softcap_kind: {self.softcap_kind}")
 
     def forward(
         self,
@@ -382,14 +410,31 @@ class RadialEmbeddingBlock(torch.nn.Module):
         atomic_numbers: torch.Tensor,
     ):
         cutoff = self.cutoff_fn(edge_lengths)  # [n_edges, 1]
+        softcap_feature = None
+        if self.softcap_kind != "none":
+            softcap_feature = self._softcap_feature(edge_lengths)  # [n_edges, 1]
         if hasattr(self, "distance_transform"):
             edge_lengths = self.distance_transform(
                 edge_lengths, node_attrs, edge_index, atomic_numbers
             )
         radial = self.bessel_fn(edge_lengths)  # [n_edges, n_basis]
+        if softcap_feature is not None and not self.softcap_concat:
+            radial = radial * softcap_feature
+        if softcap_feature is not None and self.softcap_concat:
+            radial = torch.cat([radial, softcap_feature], dim=-1)
         if hasattr(self, "apply_cutoff"):
             if not self.apply_cutoff:
+                if softcap_feature is not None and self.softcap_concat:
+                    if self.softcap_apply_env:
+                        radial[:, -1:] = radial[:, -1:] * cutoff
                 return radial, cutoff
+        if softcap_feature is not None and self.softcap_concat:
+            radial_basis = radial[:, : self.out_dim - 1] * cutoff
+            softcap_col = radial[:, -1:]
+            if self.softcap_apply_env:
+                softcap_col = softcap_col * cutoff
+            radial = torch.cat([radial_basis, softcap_col], dim=-1)
+            return radial, None
         return radial * cutoff, None  # [n_edges, n_basis], [n_edges, 1]
 
 
