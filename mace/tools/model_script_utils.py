@@ -40,6 +40,7 @@ def _get_repulsion_kwargs(args):
         pair_repulsion=True,
         pair_repulsion_kinds=kinds,
         zbl_p=int(getattr(args, "zbl_p", 6)),
+        zbl_scale=float(getattr(args, "zbl_scale", 1.0)),
         r12_scale=float(getattr(args, "r12_scale", 1.0)),
         r12_cutoff=r12_cutoff,  # can be None
         r12_switch_width=getattr(args, "r12_switch_width", None),

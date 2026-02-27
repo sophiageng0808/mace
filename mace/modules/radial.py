@@ -277,12 +277,16 @@ class ZBLRepulsion(torch.nn.Module):
     def __init__(
         self,
         p: int,
+        scale: float = 1.0,
         r_min: float = 0.2,
         apply_cutoff: bool = True,
         assume_directed_double: bool = True,
     ):
         super().__init__()
         self.p = int(p)
+        self.register_buffer(
+            "scale", torch.tensor(float(scale), dtype=torch.get_default_dtype())
+        )
         self.r_min = float(r_min)
         self.apply_cutoff = bool(apply_cutoff)
         self.assume_directed_double = bool(assume_directed_double)
@@ -329,7 +333,9 @@ class ZBLRepulsion(torch.nn.Module):
         phi = self._phi(x)
 
         ke = self.ke.to(dtype=dtype, device=device)
+        scale = self.scale.to(dtype=dtype, device=device)
         V = (ke * Zi * Zj) * (phi / r)
+        V = V * scale
         cutoff = _poly_cutoff(r, r_max.to(dtype=dtype, device=device), self.p, self.apply_cutoff)
         V = V * cutoff
 
@@ -411,16 +417,33 @@ class R12Repulsion(torch.nn.Module):
 @compile_mode("script")
 class PairRepulsionSwitch(torch.nn.Module):
     """
-    TorchScript-safe router: mode 0=off, 1=zbl, 2=r12, 3=both.
+    TorchScript-safe router:
+      - mode 0: sum of selected kinds (from kinds list)
+      - mode 1: zbl only
+      - mode 2: r12 only
+      - mode 3: both (zbl + r12)
     """
 
-    def __init__(self, zbl: ZBLRepulsion, r12: R12Repulsion, mode: int = 0):
+    def __init__(
+        self,
+        kinds: Optional[list],
+        zbl: ZBLRepulsion,
+        r12: R12Repulsion,
+        mode: int = 0,
+    ):
         super().__init__()
+        if kinds is None:
+            kinds = ["zbl"]
+        self.kinds = [k for k in kinds if k]
+        self.use_zbl = "zbl" in self.kinds
+        self.use_r12 = "r12" in self.kinds
         self.mode = int(mode)
         self.zbl = zbl
         self.r12 = r12
         if self.mode < 0 or self.mode > 3:
-            raise ValueError("PairRepulsionSwitch mode must be 0(off),1(zbl),2(r12),3(both).")
+            raise ValueError(
+                "PairRepulsionSwitch mode must be 0(sum),1(zbl),2(r12),3(both)."
+            )
 
     def forward(
         self,
@@ -434,6 +457,14 @@ class PairRepulsionSwitch(torch.nn.Module):
         out = torch.zeros((n_nodes,), dtype=lengths.dtype, device=lengths.device)
 
         if self.mode == 0:
+            if self.use_zbl:
+                out = out + self.zbl(
+                    lengths, node_attrs, edge_index, atomic_numbers, r_max
+                )
+            if self.use_r12:
+                out = out + self.r12(
+                    lengths, node_attrs, edge_index, atomic_numbers, r_max
+                )
             return out
         if self.mode == 1:
             return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max)
@@ -579,6 +610,20 @@ class SoftTransform(torch.nn.Module):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(alpha={self.alpha.item():.4f})"
+
+
+class PairRepulsionSoftTransform(SoftTransform):
+    """Backward-compatible soft distance transform for legacy checkpoints."""
+
+    def forward(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        **kwargs,
+    ) -> torch.Tensor:
+        return super().forward(lengths, node_attrs, edge_index, atomic_numbers)
 
 
 class RadialMLP(torch.nn.Module):

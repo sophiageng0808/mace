@@ -77,6 +77,7 @@ class MACE(torch.nn.Module):
         pair_repulsion_kinds: Optional[List[str]] = None,
         pair_repulsion_mode: int = 0,
         zbl_p: int = 6,
+        zbl_scale: float = 1.0,
         r12_scale: float = 1.0,
         r12_cutoff: float = 0.8,
         r12_switch_width: Optional[float] = None,
@@ -169,8 +170,10 @@ class MACE(torch.nn.Module):
         if pair_repulsion:
             self.pair_repulsion_fn = build_pair_repulsion(
                 num_polynomial_cutoff=num_polynomial_cutoff,
+                pair_repulsion_kinds=pair_repulsion_kinds,
                 pair_repulsion_mode=pair_repulsion_mode,
                 zbl_p=zbl_p,
+                zbl_scale=zbl_scale,
                 r12_scale=r12_scale,
                 r12_cutoff=r12_cutoff,
                 r12_switch_width=r12_switch_width,
@@ -592,7 +595,7 @@ class ScaleShiftMACE(MACE):
                 e0 += embedding_energy
 
         # Interactions
-        node_es_list = [pair_node_energy]  # each element [n_nodes,n_heads]
+        node_es_list: List[torch.Tensor] = []  # learned contributions only
         node_feats_list: List[torch.Tensor] = []
 
         for i, (interaction, product) in enumerate(zip(self.interactions, self.products)):
@@ -621,8 +624,12 @@ class ScaleShiftMACE(MACE):
             node_es_list.append(_match_node_energy_shape(node_es))  # [n_nodes,n_heads]
 
         node_feats_out = torch.cat(node_feats_list, dim=-1)
-        node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)  # [n_nodes,n_heads]
-        node_inter_es = self.scale_shift(node_inter_es, node_heads)         # [n_nodes,n_heads]
+        if node_es_list:
+            node_learned_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)  # [n_nodes,n_heads]
+        else:
+            node_learned_es = torch.zeros_like(pair_node_energy)
+        node_learned_es = self.scale_shift(node_learned_es, node_heads)       # [n_nodes,n_heads]
+        node_inter_es = node_learned_es + pair_node_energy                    # [n_nodes,n_heads]
         inter_e = scatter_sum(node_inter_es, data["batch"], dim=0, dim_size=num_graphs)  # [n_graphs,n_heads]
 
         total_energy = e0 + inter_e

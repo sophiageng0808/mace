@@ -244,6 +244,11 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
             return "Agnesi"
         if radial.distance_transform.__class__.__name__ == "SoftTransform":
             return "Soft"
+        if radial.distance_transform.__class__.__name__ in (
+            "PairRepulsionSwitch",
+            "PairRepulsionSoftTransform",
+        ):
+            return "Soft"
         return radial.distance_transform.__class__.__name__
 
     scale = model.scale_shift.scale
@@ -277,6 +282,11 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
                 cfg["zbl_p"] = int(zbl.p)
             except Exception:  # pylint: disable=broad-except
                 cfg["zbl_p"] = zbl.p
+        if zbl is not None and hasattr(zbl, "scale"):
+            try:
+                cfg["zbl_scale"] = float(zbl.scale.item())
+            except Exception:  # pylint: disable=broad-except
+                cfg["zbl_scale"] = float(zbl.scale)
         if zbl is not None and hasattr(zbl, "r_min"):
             cfg["pair_repulsion_r_min"] = float(zbl.r_min)
 
@@ -578,6 +588,8 @@ def convert_from_json_format(dict_input):
         dict_output["pair_repulsion_mode"] = int(dict_input["pair_repulsion_mode"])
     if "zbl_p" in dict_input:
         dict_output["zbl_p"] = int(dict_input["zbl_p"])
+    if "zbl_scale" in dict_input:
+        dict_output["zbl_scale"] = float(dict_input["zbl_scale"])
     if "r12_scale" in dict_input:
         dict_output["r12_scale"] = float(dict_input["r12_scale"])
     if "r12_cutoff" in dict_input:

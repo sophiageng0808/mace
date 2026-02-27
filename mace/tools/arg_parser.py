@@ -190,7 +190,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     #   3 = max / softmax / other (depends on your implementation)
     parser.add_argument(
         "--pair_repulsion_mode",
-        help="combination mode for PairRepulsionSwitch (INT). 0=sum, 1=zbl-only, 2=r12-only, 3=both",
+        help="combination mode for PairRepulsionSwitch (INT). 0=sum of kinds, 1=zbl-only, 2=r12-only, 3=both",
         type=int,
         default=0,
         choices=[0, 1, 2, 3],
@@ -208,6 +208,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="polynomial cutoff exponent p for ZBL envelope (if used by your ZBLRepulsion)",
         type=int,
         default=6,
+    )
+    parser.add_argument(
+        "--zbl_scale",
+        help="scale factor / prefactor for ZBL repulsion term",
+        type=float,
+        default=1.0,
     )
 
     parser.add_argument(
