@@ -13,9 +13,6 @@ import wandb
 import matplotlib.pyplot as plt
 from ase.io import read as ase_read
 
-# Backward-compat for repulsion checkpoints:
-# - some expect mace.modules.repulsion.ZBLBasis
-# - some expect mace.modules.repulsion.PairRepulsionSwitch
 import sys
 import mace.modules.radial as _mace_radial
 
@@ -56,7 +53,9 @@ except Exception:
 # -----------------------------
 # Config (dataset + scan)
 # -----------------------------
-DATA_EXTXYZ = "/h/400/sophiageng/mace/data/overfit100_E0sub.extxyz"
+USER = os.environ.get("USER", "unknown")
+SCRATCH_MACE = Path(f"/scratch/{USER}/mace")
+DATA_EXTXYZ = str(SCRATCH_MACE / "data" / "overfit100_E0sub.extxyz")
 N_STRUCTURES_DEFAULT = 100
 
 STEPS_DEFAULT = 50
@@ -69,11 +68,12 @@ REL_DROP_TOL = 0.01  # monotonicity tolerance as fraction of curve span
 # -----------------------------
 # Repulsion models (ABSOLUTE PATHS)
 # -----------------------------
+JOBS_ROOT = Path(f"/scratch/{USER}/mace_worktrees/jobs_repulsion")
 REPULSION_MODELS = [
-    # ("baseline_norepulsion", "/h/400/sophiageng/mace_worktrees/jobs_repulsion/baseline/baseline_norepulsion.model"),
-    ("r12",                  "/h/400/sophiageng/mace_worktrees/jobs_repulsion/360348_2_repulsion_r12/repulsion_r12.model"),
-    ("zbl",                  "/h/400/sophiageng/mace_worktrees/jobs_repulsion/360408_1_repulsion_zbl/repulsion_zbl.model"),
-    ("zbl_r12",              "/h/400/sophiageng/mace_worktrees/jobs_repulsion/360492_3_repulsion_zbl_r12/repulsion_zbl_r12.model"),
+    # ("baseline_norepulsion", str(JOBS_ROOT / "baseline" / "baseline_norepulsion.model")),
+    ("r12",     "/scratch/sophiag/mace_worktrees/jobs_repulsion/309421_2_repulsion_r12/repulsion_r12.model"),
+    ("zbl",     "/scratch/sophiag/mace_worktrees/jobs_repulsion/309419_1_repulsion_zbl/repulsion_zbl.model"),
+    ("zbl_r12", "/scratch/sophiag/mace_worktrees/jobs_repulsion/309413_3_repulsion_zbl_r12/repulsion_zbl_r12.model"),
 ]
 
 # -----------------------------
@@ -89,6 +89,7 @@ CSV_HEADER = [
     "max_rel_dEdd_mismatch", "mean_rel_dEdd_mismatch",
     "mean_force_cos_angle", "min_force_cos_angle",
     "n_nan_energy", "n_inf_energy", "n_nan_force", "n_inf_force",
+    "has_nonfinite", "has_nan_only",
     "atom1_type", "atom2_type", "pair_label", "failed", "d_fail",
     "charge", "spin",
 ]
@@ -97,6 +98,7 @@ SUMMARY_HEADER = [
     "group", "model",
     "n_curves", "n_failed", "fail_rate",
     "energy_fail_rate", "force_fail_rate",
+    "nonfinite_rate", "nan_only_rate",
     "mean_max_abs_dEdd_mismatch", "mean_mean_abs_dEdd_mismatch",
     "mean_max_rel_dEdd_mismatch", "mean_mean_rel_dEdd_mismatch",
     "mean_mean_net_force_norm", "mean_mean_net_torque_norm",
@@ -197,6 +199,21 @@ def get_r12_min_distance(calc):
         if hasattr(r12, "r_min"):
             try:
                 return float(r12.r_min)
+            except Exception:
+                pass
+    return None
+
+def get_zbl_min_distance(calc):
+    for model in getattr(calc, "models", []):
+        pr = getattr(model, "pair_repulsion_fn", None)
+        if pr is None:
+            continue
+        zbl = getattr(pr, "zbl", None)
+        if zbl is None:
+            continue
+        if hasattr(zbl, "r_min"):
+            try:
+                return float(zbl.r_min)
             except Exception:
                 pass
     return None
@@ -302,6 +319,8 @@ def run_scan(
     f_mono = monotone_nondecreasing(raw_f)
     f_abs_mono = monotone_nondecreasing(raw_f_abs)
     failed = (not e_mono) or (not f_mono)
+    has_nonfinite = (n_nan_energy + n_inf_energy + n_nan_force + n_inf_force) > 0
+    has_nan_only = (n_nan_energy + n_nan_force) > 0 and (n_inf_energy + n_inf_force) == 0
 
     e_fail_idx = first_failure_index(raw_e)
     f_fail_idx = first_failure_index(raw_f)
@@ -317,6 +336,7 @@ def run_scan(
         max_abs_mis, mean_abs_mis, max_rel_mis, mean_rel_mis,
         float(np.mean(cos_angles)), float(np.min(cos_angles)),
         int(n_nan_energy), int(n_inf_energy), int(n_nan_force), int(n_inf_force),
+        bool(has_nonfinite), bool(has_nan_only),
         atom1, atom2, pair_label, bool(failed), d_fail,
         charge, spin,
     ]
@@ -335,6 +355,8 @@ def run_scan(
             f"{group_name}/{model_name}/inf_energy_count": int(n_inf_energy),
             f"{group_name}/{model_name}/nan_force_count": int(n_nan_force),
             f"{group_name}/{model_name}/inf_force_count": int(n_inf_force),
+            f"{group_name}/{model_name}/nonfinite_curve": int(has_nonfinite),
+            f"{group_name}/{model_name}/nan_only_curve": int(has_nan_only),
         })
         if model_name == "r12" and failed:
             fig, axes = plt.subplots(2, 1, figsize=(6, 6), sharex=True)
@@ -356,6 +378,8 @@ def run_scan(
         failed=bool(failed),
         energy_failed=bool(not e_mono),
         force_failed=bool(not f_mono),
+        has_nonfinite=bool(has_nonfinite),
+        has_nan_only=bool(has_nan_only),
         max_abs_dEdd_mismatch=max_abs_mis,
         mean_abs_dEdd_mismatch=mean_abs_mis,
         max_rel_dEdd_mismatch=max_rel_mis,
@@ -389,11 +413,16 @@ if __name__ == "__main__":
     run_id = args.run_name or datetime.now().strftime("%Y%m%d_%H%M%S")
     group_name = "repulsion"
 
-    OUTPUT_ROOT = Path("/h/400/sophiageng/mace/outputs") / "dissociation_scans_overfit100"
+    OUTPUT_ROOT = SCRATCH_MACE / "outputs" / "dissociation_scans_overfit100"
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    group_dir = OUTPUT_ROOT / group_name / run_id
+    group_dir.mkdir(parents=True, exist_ok=True)
 
     use_wandb = not args.no_wandb
     if use_wandb:
+        os.environ.setdefault("WANDB_MODE", "offline")
+        os.environ.setdefault("WANDB_DISABLED", "false")
+        os.environ.setdefault("WANDB_DIR", str(group_dir / "wandb"))
         wandb.init(
             project="dmlip-dissociation-scan-overfit100",
             name=f"overfit100_scan_{run_id}",
@@ -420,10 +449,6 @@ if __name__ == "__main__":
 
     dist = np.linspace(args.start_distance, args.end_distance, args.steps)
 
-    # Group-level outputs (per-run folder)
-    group_dir = OUTPUT_ROOT / group_name / run_id
-    group_dir.mkdir(parents=True, exist_ok=True)
-
     SUMMARY_CSV_PATH = group_dir / "model_summary_metrics.csv"
     ensure_csv(SUMMARY_CSV_PATH, SUMMARY_HEADER)
 
@@ -447,7 +472,6 @@ if __name__ == "__main__":
         ensure_csv(failed_csv, CSV_HEADER)
         per_model_csv[model_name] = (all_csv, failed_csv)
 
-    # Fingerprint sanity check
     probe = frames[0].copy()
     preserve_info(probe)
     print(f"\n[FINGERPRINT] [{group_name}] energy + ||F|| + max|F| on frame0:")
@@ -463,6 +487,8 @@ if __name__ == "__main__":
             "n_failed": 0,
             "n_energy_failed": 0,
             "n_force_failed": 0,
+            "n_nonfinite": 0,
+            "n_nan_only": 0,
             "max_abs_mis": [],
             "mean_abs_mis": [],
             "max_rel_mis": [],
@@ -497,6 +523,12 @@ if __name__ == "__main__":
                         min_dist = r12_min + 1e-3
                         if np.min(dist_model) <= min_dist:
                             dist_model = np.maximum(dist_model, min_dist)
+                if model_name in ("zbl", "zbl_r12"):
+                    zbl_min = get_zbl_min_distance(calc)
+                    if zbl_min is not None:
+                        min_dist = zbl_min + 1e-3
+                        if np.min(dist_model) <= min_dist:
+                            dist_model = np.maximum(dist_model, min_dist)
                 metrics = run_scan(
                     at, i, j, calc,
                     model_name=model_name,
@@ -513,6 +545,8 @@ if __name__ == "__main__":
                 acc["n_failed"] += int(metrics["failed"])
                 acc["n_energy_failed"] += int(metrics["energy_failed"])
                 acc["n_force_failed"] += int(metrics["force_failed"])
+                acc["n_nonfinite"] += int(metrics["has_nonfinite"])
+                acc["n_nan_only"] += int(metrics["has_nan_only"])
                 acc["max_abs_mis"].append(metrics["max_abs_dEdd_mismatch"])
                 acc["mean_abs_mis"].append(metrics["mean_abs_dEdd_mismatch"])
                 acc["max_rel_mis"].append(metrics["max_rel_dEdd_mismatch"])
@@ -529,12 +563,25 @@ if __name__ == "__main__":
             group_name, model_name,
             int(acc["n"]), int(n_failed), float(n_failed / n),
             float(acc["n_energy_failed"] / n), float(acc["n_force_failed"] / n),
+            float(acc["n_nonfinite"] / n), float(acc["n_nan_only"] / n),
             float(np.nanmean(acc["max_abs_mis"])), float(np.nanmean(acc["mean_abs_mis"])),
             float(np.nanmean(acc["max_rel_mis"])), float(np.nanmean(acc["mean_rel_mis"])),
             float(np.nanmean(acc["mean_net_force"])), float(np.nanmean(acc["mean_net_torque"])),
             float(np.nanmean(acc["mean_cos"])), float(np.nanmean(acc["min_cos"])),
         ]
         write_csv(SUMMARY_CSV_PATH, row)
+        if use_wandb:
+            wandb.log(
+                {
+                    f"{group_name}/{model_name}/fail_rate": float(n_failed / n),
+                    f"{group_name}/{model_name}/nonfinite_rate": float(
+                        acc["n_nonfinite"] / n
+                    ),
+                    f"{group_name}/{model_name}/nan_only_rate": float(
+                        acc["n_nan_only"] / n
+                    ),
+                }
+            )
 
     if use_wandb:
         art = wandb.Artifact(f"scan_outputs_overfit100_{group_name}_{run_id}", type="results")

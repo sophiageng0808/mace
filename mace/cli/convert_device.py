@@ -2,6 +2,8 @@ from argparse import ArgumentParser
 
 import torch
 
+from mace.tools.scripts_utils import load_model, save_model
+
 
 def main():
     parser = ArgumentParser()
@@ -22,9 +24,9 @@ def main():
     if args.output_file is None:
         args.output_file = args.model_file + "." + args.target_device
 
-    model = torch.load(args.model_file, weights_only=False)
+    model = load_model(args.model_file, map_location=args.target_device, weights_only=False)
     model.to(args.target_device)
-    torch.save(model, args.output_file)
+    save_model(model, args.output_file, config_model=model)
 
 
 if __name__ == "__main__":

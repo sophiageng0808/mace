@@ -58,6 +58,7 @@ from mace.tools.scripts_utils import (
     convert_to_json_format,
     dict_to_array,
     extract_config_mace_model,
+    extract_model,
     get_atomic_energies,
     get_avg_num_neighbors,
     get_config_type_weights,
@@ -69,6 +70,8 @@ from mace.tools.scripts_utils import (
     get_swa,
     print_git_commit,
     remove_pt_head,
+    load_model,
+    save_model,
     setup_wandb,
 )
 from mace.tools.tables_utils import create_error_table
@@ -166,7 +169,7 @@ def run(args) -> None:
             )
             model_foundation = calc.models[0]
         else:
-            model_foundation = torch.load(
+            model_foundation = load_model(
                 args.foundation_model, map_location=args.device
             )
             logging.info(
@@ -1008,16 +1011,24 @@ def run(args) -> None:
             else:
                 model_path = Path(args.checkpoints_dir) / (tag + ".model")
             logging.info(f"Saving model to {model_path}")
-            model_to_save = deepcopy(model)
+            try:
+                model_to_save = deepcopy(model)
+            except Exception as exc:  # pylint: disable=broad-except
+                logging.warning(
+                    "Deepcopy failed while saving model (%s). Rebuilding from state_dict.",
+                    exc,
+                )
+                target_device = "cpu" if args.save_cpu else device
+                model_to_save = extract_model(model, map_location=target_device)
             if args.enable_cueq and not args.only_cueq:
                 logging.info("RUNING CUEQ TO E3NN")
-                model_to_save = run_cueq_to_e3nn(deepcopy(model), device=device)
+                model_to_save = run_cueq_to_e3nn(model_to_save, device=device)
             if args.enable_oeq:
                 logging.info("RUNING OEQ TO E3NN")
-                model_to_save = run_oeq_to_e3nn(deepcopy(model), device=device)
+                model_to_save = run_oeq_to_e3nn(model_to_save, device=device)
             if args.save_cpu:
                 model_to_save = model_to_save.to("cpu")
-            torch.save(model_to_save, model_path)
+            save_model(model_to_save, model_path, config_model=model_to_save)
             extra_files = {
                 "commit.txt": commit.encode("utf-8") if commit is not None else b"",
                 "config.yaml": json.dumps(
@@ -1026,8 +1037,10 @@ def run(args) -> None:
             }
             os.makedirs(args.model_dir, exist_ok=True)
             if swa_eval:
-                torch.save(
-                    model_to_save, Path(args.model_dir) / (args.name + "_stagetwo.model")
+                save_model(
+                    model_to_save,
+                    Path(args.model_dir) / (args.name + "_stagetwo.model"),
+                    config_model=model_to_save,
                 )
                 try:
                     path_complied = Path(args.model_dir) / (
@@ -1043,7 +1056,11 @@ def run(args) -> None:
                 except Exception as e:  # pylint: disable=W0718
                     pass
             else:
-                torch.save(model_to_save, Path(args.model_dir) / (args.name + ".model"))
+                save_model(
+                    model_to_save,
+                    Path(args.model_dir) / (args.name + ".model"),
+                    config_model=model_to_save,
+                )
                 try:
                     path_complied = Path(args.model_dir) / (
                         args.name + "_compiled.model"

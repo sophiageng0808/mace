@@ -130,9 +130,13 @@ class MACELES(ScaleShiftMACE):
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
 
-        if hasattr(self, "pair_repulsion"):
+        if hasattr(self, "pair_repulsion_fn"):
             pair_node_energy = self.pair_repulsion_fn(
-                lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
+                lengths=lengths,
+                node_attrs=data["node_attrs"],
+                edge_index=data["edge_index"],
+                atomic_numbers=self.atomic_numbers,
+                r_max=self.r_max,
             )
             if is_lammps:
                 pair_node_energy = pair_node_energy[: lammps_natoms[0]]

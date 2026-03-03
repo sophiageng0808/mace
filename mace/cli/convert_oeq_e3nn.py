@@ -4,13 +4,13 @@ import os
 
 import torch
 
-from mace.tools.scripts_utils import extract_config_mace_model
+from mace.tools.scripts_utils import extract_config_mace_model, load_model
 
 
 def run(input_model, output_model="_e3nn.model", device="cpu", return_model=True):
     # Load OEQ model
     if isinstance(input_model, str):
-        source_model = torch.load(input_model, map_location=device)
+        source_model = load_model(input_model, map_location=device)
     else:
         source_model = input_model
     default_dtype = next(source_model.parameters()).dtype

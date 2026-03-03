@@ -10,6 +10,7 @@ import dataclasses
 import json
 import logging
 import os
+import pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -20,6 +21,7 @@ from e3nn import o3
 from torch.optim.swa_utils import SWALR, AveragedModel
 
 from mace import data, modules, tools
+from mace.modules.wrapper_ops import CuEquivarianceConfig, OEQConfig
 from mace.data import KeySpecification
 from mace.tools.train import SWAContainer
 
@@ -574,6 +576,101 @@ def convert_from_json_format(dict_input):
     dict_output["correlation"] = int(dict_input["correlation"])
     dict_output["radial_type"] = dict_input["radial_type"]
     dict_output["radial_MLP"] = ast.literal_eval(dict_input["radial_MLP"])
+    if "edge_irreps" in dict_input:
+        edge_irreps = dict_input["edge_irreps"]
+        if edge_irreps in (None, "None"):
+            dict_output["edge_irreps"] = None
+        elif isinstance(edge_irreps, str):
+            dict_output["edge_irreps"] = o3.Irreps(edge_irreps)
+        else:
+            dict_output["edge_irreps"] = edge_irreps
+    if "cueq_config" in dict_input:
+        cueq_config = dict_input["cueq_config"]
+        if cueq_config in (None, "None"):
+            dict_output["cueq_config"] = None
+        elif isinstance(cueq_config, dict):
+            dict_output["cueq_config"] = CuEquivarianceConfig(**cueq_config)
+        elif isinstance(cueq_config, str):
+            try:
+                cueq_parsed = ast.literal_eval(cueq_config)
+            except (ValueError, SyntaxError):
+                cueq_parsed = None
+            dict_output["cueq_config"] = (
+                CuEquivarianceConfig(**cueq_parsed)
+                if isinstance(cueq_parsed, dict)
+                else None
+            )
+        else:
+            dict_output["cueq_config"] = cueq_config
+    if "oeq_config" in dict_input:
+        oeq_config = dict_input["oeq_config"]
+        if oeq_config in (None, "None"):
+            dict_output["oeq_config"] = None
+        elif isinstance(oeq_config, dict):
+            dict_output["oeq_config"] = OEQConfig(**oeq_config)
+        elif isinstance(oeq_config, str):
+            try:
+                oeq_parsed = ast.literal_eval(oeq_config)
+            except (ValueError, SyntaxError):
+                oeq_parsed = None
+            dict_output["oeq_config"] = (
+                OEQConfig(**oeq_parsed) if isinstance(oeq_parsed, dict) else None
+            )
+        else:
+            dict_output["oeq_config"] = oeq_config
+    if "readout_cls" in dict_input:
+        readout_cls = dict_input["readout_cls"]
+        if isinstance(readout_cls, str):
+            class_name = readout_cls
+            if "'" in readout_cls:
+                class_name = readout_cls.split("'")[-2].split(".")[-1]
+            readout_map = {
+                "LinearReadoutBlock": modules.blocks.LinearReadoutBlock,
+                "NonLinearReadoutBlock": modules.blocks.NonLinearReadoutBlock,
+                "NonLinearBiasReadoutBlock": modules.blocks.NonLinearBiasReadoutBlock,
+                "LinearDipoleReadoutBlock": modules.blocks.LinearDipoleReadoutBlock,
+                "NonLinearDipoleReadoutBlock": modules.blocks.NonLinearDipoleReadoutBlock,
+                "LinearDipolePolarReadoutBlock": (
+                    modules.blocks.LinearDipolePolarReadoutBlock
+                ),
+                "NonLinearDipolePolarReadoutBlock": (
+                    modules.blocks.NonLinearDipolePolarReadoutBlock
+                ),
+            }
+            dict_output["readout_cls"] = readout_map.get(class_name)
+        else:
+            dict_output["readout_cls"] = readout_cls
+    def _parse_bool(value):
+        if isinstance(value, bool):
+            return value
+        if value in (None, "None"):
+            return False
+        if isinstance(value, str):
+            val = value.strip().lower()
+            if val in ("true", "1", "yes", "y", "t"):
+                return True
+            if val in ("false", "0", "no", "n", "f"):
+                return False
+        return bool(value)
+
+    for key in (
+        "use_reduced_cg",
+        "use_so3",
+        "use_edge_irreps_first",
+        "use_agnostic_product",
+        "use_last_readout_only",
+        "use_embedding_readout",
+        "apply_cutoff",
+    ):
+        if key in dict_input:
+            dict_output[key] = _parse_bool(dict_input[key])
+
+    if "heads" in dict_input:
+        heads = dict_input["heads"]
+        if isinstance(heads, str):
+            heads = ast.literal_eval(heads)
+        dict_output["heads"] = heads
+
     if "pair_repulsion" in dict_input:
         if isinstance(dict_input["pair_repulsion"], str):
             dict_output["pair_repulsion"] = ast.literal_eval(dict_input["pair_repulsion"])
@@ -604,9 +701,26 @@ def convert_from_json_format(dict_input):
         )
     if "pair_repulsion_r_min" in dict_input:
         dict_output["pair_repulsion_r_min"] = float(dict_input["pair_repulsion_r_min"])
+    if "embedding_specs" in dict_input:
+        specs = dict_input["embedding_specs"]
+        if specs in (None, "None"):
+            dict_output["embedding_specs"] = None
+        elif isinstance(specs, str):
+            dict_output["embedding_specs"] = ast.literal_eval(specs)
+        else:
+            dict_output["embedding_specs"] = specs
     dict_output["distance_transform"] = dict_input["distance_transform"]
-    dict_output["atomic_inter_scale"] = float(dict_input["atomic_inter_scale"])
-    dict_output["atomic_inter_shift"] = float(dict_input["atomic_inter_shift"])
+    def _parse_scale_shift(value):
+        if isinstance(value, (list, tuple, np.ndarray)):
+            return np.asarray(value, dtype=float)
+        return float(value)
+
+    dict_output["atomic_inter_scale"] = _parse_scale_shift(
+        dict_input["atomic_inter_scale"]
+    )
+    dict_output["atomic_inter_shift"] = _parse_scale_shift(
+        dict_input["atomic_inter_shift"]
+    )
 
     return dict_output
 
@@ -621,6 +735,58 @@ def load_from_json(f: str, map_location: str = "cpu") -> torch.nn.Module:
     )
     model_load_yaml.load_state_dict(model_jit_load.state_dict())
     return model_load_yaml.to(map_location)
+
+
+def save_model(
+    model: torch.nn.Module,
+    path: Union[str, Path],
+    *,
+    config_model: Optional[torch.nn.Module] = None,
+) -> str:
+    """
+    Save a model to disk.
+
+    Falls back to saving state_dict + config when full pickling fails.
+    Returns "full" or "state_dict" to indicate the path contents.
+    """
+    try:
+        torch.save(model, path)
+        return "full"
+    except (pickle.PickleError, TypeError, AttributeError) as exc:
+        logging.warning(
+            "torch.save failed (%s). Saving state_dict + config instead.", exc
+        )
+        source_model = model if config_model is None else config_model
+        payload = {
+            "state_dict": model.state_dict(),
+            "config": convert_to_json_format(extract_config_mace_model(source_model)),
+            "model_class": model.__class__.__name__,
+        }
+        torch.save(payload, path)
+        return "state_dict"
+
+
+def load_model(
+    f: str,
+    *,
+    map_location: str = "cpu",
+    weights_only: Optional[bool] = None,
+) -> torch.nn.Module:
+    """
+    Load a full model, or reconstruct from state_dict+config payload.
+    """
+    load_kwargs: Dict[str, Any] = {"map_location": map_location}
+    if weights_only is not None:
+        load_kwargs["weights_only"] = weights_only
+    loaded = torch.load(f, **load_kwargs)
+    if isinstance(loaded, dict) and "state_dict" in loaded and "config" in loaded:
+        config = convert_from_json_format(loaded["config"])
+        model_class = loaded.get("model_class", "ScaleShiftMACE")
+        model_cls = modules.MACELES if model_class == "MACELES" else modules.ScaleShiftMACE
+        model = model_cls(**config)
+        model.load_state_dict(loaded["state_dict"])
+        return model.to(map_location)
+    return loaded
 
 
 def get_atomic_energies(E0s, train_collection, z_table) -> dict:

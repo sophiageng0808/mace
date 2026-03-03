@@ -292,7 +292,7 @@ def train(
             train_sampler.set_epoch(epoch)
         if "ScheduleFree" in type(optimizer).__name__:
             optimizer.train()
-        train_one_epoch(
+        avg_train_loss = train_one_epoch(
             model=model,
             loss_fn=loss_fn,
             data_loader=train_loader,
@@ -307,6 +307,15 @@ def train(
             distributed_model=distributed_model,
             rank=rank,
         )
+        if log_wandb and rank == 0:
+            lr = optimizer.param_groups[0].get("lr", 0.0) if optimizer.param_groups else 0.0
+            wandb.log(
+                {
+                    "epoch": epoch,
+                    "train_loss": avg_train_loss,
+                    "lr": lr,
+                }
+            )
         if distributed:
             torch.distributed.barrier()
 
@@ -348,6 +357,9 @@ def train(
                                 ],
                                 "valid_rmse_f": eval_metrics["rmse_f"],
                             }
+                if log_wandb and rank == 0:
+                    if optimizer.param_groups:
+                        wandb_log_dict["lr"] = optimizer.param_groups[0].get("lr", 0.0)
                 if plotter and epoch % plotter.plot_frequency == 0:
                     try:
                         plotter.plot(epoch, model_to_evaluate, rank)
@@ -431,8 +443,10 @@ def train_one_epoch(
     distributed: bool,
     distributed_model: Optional[DistributedDataParallel] = None,
     rank: Optional[int] = 0,
-) -> None:
+) -> float:
     model_to_train = model if distributed_model is None else distributed_model
+    total_loss = 0.0
+    num_batches = 0
 
     if isinstance(optimizer, LBFGS):
         _, opt_metrics = take_step_lbfgs(
@@ -451,6 +465,8 @@ def train_one_epoch(
         opt_metrics["epoch"] = epoch
         if rank == 0:
             logger.log(opt_metrics)
+        total_loss += float(opt_metrics.get("loss", 0.0))
+        num_batches += 1
     else:
         for batch in data_loader:
             _, opt_metrics = take_step(
@@ -467,6 +483,11 @@ def train_one_epoch(
             opt_metrics["epoch"] = epoch
             if rank == 0:
                 logger.log(opt_metrics)
+            num_batches += 1
+            total_loss += float(opt_metrics.get("loss", 0.0))
+    if num_batches == 0:
+        return 0.0
+    return total_loss / num_batches
 
 
 def take_step(
@@ -482,7 +503,6 @@ def take_step(
     start_time = time.time()
     batch = batch.to(device)
     batch_dict = batch.to_dict()
-
     def closure():
         optimizer.zero_grad(set_to_none=True)
         output = model(
