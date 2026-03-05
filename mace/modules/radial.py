@@ -5,6 +5,7 @@
 ###########################################################################################
 
 import logging
+import math
 
 import ase
 import numpy as np
@@ -317,6 +318,29 @@ class ZBLRepulsion(torch.nn.Module):
         atomic_numbers: torch.Tensor,
         r_max: torch.Tensor,
     ) -> torch.Tensor:
+        V = self.edge_energy(
+            lengths=lengths,
+            node_attrs=node_attrs,
+            edge_index=edge_index,
+            atomic_numbers=atomic_numbers,
+            r_max=r_max,
+        )
+        n_nodes = node_attrs.shape[0]
+        return _split_edge_energy_to_nodes(
+            V_edge=V,
+            edge_index=edge_index,
+            n_nodes=n_nodes,
+            assume_directed_double=self.assume_directed_double,
+        )
+
+    def edge_energy(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
         src = edge_index[0]
         dst = edge_index[1]
 
@@ -338,14 +362,7 @@ class ZBLRepulsion(torch.nn.Module):
         V = V * scale
         cutoff = _poly_cutoff(r, r_max.to(dtype=dtype, device=device), self.p, self.apply_cutoff)
         V = V * cutoff
-
-        n_nodes = node_attrs.shape[0]
-        return _split_edge_energy_to_nodes(
-            V_edge=V,
-            edge_index=edge_index,
-            n_nodes=n_nodes,
-            assume_directed_double=self.assume_directed_double,
-        )
+        return V
 
 
 @compile_mode("script")
@@ -387,6 +404,29 @@ class R12Repulsion(torch.nn.Module):
         atomic_numbers: torch.Tensor,
         r_max: torch.Tensor,
     ) -> torch.Tensor:
+        V = self.edge_energy(
+            lengths=lengths,
+            node_attrs=node_attrs,
+            edge_index=edge_index,
+            atomic_numbers=atomic_numbers,
+            r_max=r_max,
+        )
+        n_nodes = node_attrs.shape[0]
+        return _split_edge_energy_to_nodes(
+            V_edge=V,
+            edge_index=edge_index,
+            n_nodes=n_nodes,
+            assume_directed_double=self.assume_directed_double,
+        )
+
+    def edge_energy(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
         r = torch.clamp(lengths, min=self.r_min)
         dtype = r.dtype
         device = r.device
@@ -404,14 +444,7 @@ class R12Repulsion(torch.nn.Module):
         smooth = t * t * (3.0 - 2.0 * t)
         cutoff_extra = torch.where(width > 0, smooth, hard)
         V = V * torch.where(r12_cutoff > 0, cutoff_extra, torch.ones_like(r))
-
-        n_nodes = node_attrs.shape[0]
-        return _split_edge_energy_to_nodes(
-            V_edge=V,
-            edge_index=edge_index,
-            n_nodes=n_nodes,
-            assume_directed_double=self.assume_directed_double,
-        )
+        return V
 
 
 @compile_mode("script")
@@ -452,26 +485,176 @@ class PairRepulsionSwitch(torch.nn.Module):
         edge_index: torch.Tensor,
         atomic_numbers: torch.Tensor,
         r_max: torch.Tensor,
+        node_feats: Optional[torch.Tensor] = None,  # pylint: disable=unused-argument
     ) -> torch.Tensor:
+        V_edge = self.edge_energy(
+            lengths=lengths,
+            node_attrs=node_attrs,
+            edge_index=edge_index,
+            atomic_numbers=atomic_numbers,
+            r_max=r_max,
+        )
         n_nodes = node_attrs.shape[0]
-        out = torch.zeros((n_nodes,), dtype=lengths.dtype, device=lengths.device)
+        return _split_edge_energy_to_nodes(
+            V_edge=V_edge,
+            edge_index=edge_index,
+            n_nodes=n_nodes,
+            assume_directed_double=True,
+        )
+
+    def edge_energy(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
+        out = torch.zeros_like(lengths)
 
         if self.mode == 0:
             if self.use_zbl:
-                out = out + self.zbl(
+                out = out + self.zbl.edge_energy(
                     lengths, node_attrs, edge_index, atomic_numbers, r_max
                 )
             if self.use_r12:
-                out = out + self.r12(
+                out = out + self.r12.edge_energy(
                     lengths, node_attrs, edge_index, atomic_numbers, r_max
                 )
-            return out
-        if self.mode == 1:
-            return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max)
-        if self.mode == 2:
-            return self.r12(lengths, node_attrs, edge_index, atomic_numbers, r_max)
-        return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max) + self.r12(
-            lengths, node_attrs, edge_index, atomic_numbers, r_max
+        elif self.mode == 1:
+            out = out + self.zbl.edge_energy(
+                lengths, node_attrs, edge_index, atomic_numbers, r_max
+            )
+        elif self.mode == 2:
+            out = out + self.r12.edge_energy(
+                lengths, node_attrs, edge_index, atomic_numbers, r_max
+            )
+        elif self.mode == 3:
+            out = out + self.zbl.edge_energy(
+                lengths, node_attrs, edge_index, atomic_numbers, r_max
+            )
+            out = out + self.r12.edge_energy(
+                lengths, node_attrs, edge_index, atomic_numbers, r_max
+            )
+
+        return out
+
+
+@compile_mode("script")
+class EmbeddingConditionedPairRepulsion(torch.nn.Module):
+    def __init__(
+        self,
+        base: PairRepulsionSwitch,
+        embedding_dim: int,
+        alpha_hidden_dim: int = 32,
+        symmetric_pair_feat: bool = True,
+        gate: str = "cosine",
+        r_on: float = 0.6,
+        r_cut: float = 1.2,
+        alpha_min: Optional[float] = 0.1,
+        alpha_max: Optional[float] = 10.0,
+    ):
+        super().__init__()
+        self.base = base
+        self.embedding_dim = int(embedding_dim)
+        self.alpha_hidden_dim = int(alpha_hidden_dim)
+        self.symmetric_pair_feat = bool(symmetric_pair_feat)
+        self.gate = str(gate)
+        self.r_on = float(r_on)
+        self.r_cut = float(r_cut)
+        self.alpha_min = alpha_min
+        self.alpha_max = alpha_max
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(2 * self.embedding_dim, self.alpha_hidden_dim),
+            torch.nn.SiLU(),
+            torch.nn.Linear(self.alpha_hidden_dim, 1),
+        )
+        self.softplus = torch.nn.Softplus()
+        self.requires_node_feats = True
+        self.embedding_conditioned = True
+        # Expose base attributes for config extraction
+        self.kinds = getattr(base, "kinds", None)
+        self.mode = getattr(base, "mode", 0)
+        self.zbl = getattr(base, "zbl", None)
+        self.r12 = getattr(base, "r12", None)
+
+        if self.gate not in ("cosine", "none"):
+            raise ValueError("pair_repulsion_gate must be 'cosine' or 'none'.")
+        if self.gate == "cosine" and self.r_cut <= 0:
+            raise ValueError("pair_repulsion_r_cut must be > 0 for cosine gate.")
+        if self.gate == "cosine" and self.r_on >= self.r_cut:
+            raise ValueError("pair_repulsion_r_on must be < pair_repulsion_r_cut.")
+        if self.alpha_min is not None and self.alpha_max is not None:
+            if float(self.alpha_min) >= float(self.alpha_max):
+                raise ValueError("pair_repulsion_alpha_min must be < alpha_max.")
+
+    def _pair_features(
+        self, h_i: torch.Tensor, h_j: torch.Tensor
+    ) -> torch.Tensor:
+        if self.symmetric_pair_feat:
+            return torch.cat([h_i + h_j, (h_i - h_j).abs()], dim=-1)
+        return torch.cat([h_i, h_j], dim=-1)
+
+    def edge_gate(self, r: torch.Tensor) -> torch.Tensor:
+        if self.gate == "none":
+            return torch.ones_like(r)
+        if self.r_on <= 0.0:
+            x = torch.clamp(r / self.r_cut, 0.0, 1.0)
+            g = 0.5 * (torch.cos(math.pi * x) + 1.0)
+            return torch.where(r < self.r_cut, g, torch.zeros_like(r))
+        g = torch.ones_like(r)
+        mid = (r > self.r_on) & (r < self.r_cut)
+        x = (r[mid] - self.r_on) / (self.r_cut - self.r_on)
+        g[mid] = 0.5 * (torch.cos(math.pi * x) + 1.0)
+        g = torch.where(r >= self.r_cut, torch.zeros_like(r), g)
+        return g
+
+    def edge_alpha(
+        self, node_feats: torch.Tensor, edge_index: torch.Tensor
+    ) -> torch.Tensor:
+        src = edge_index[0]
+        dst = edge_index[1]
+        h_i = node_feats[src]
+        h_j = node_feats[dst]
+        pair = self._pair_features(h_i, h_j)
+        alpha = self.softplus(self.mlp(pair)).squeeze(-1)
+        if self.alpha_min is None or self.alpha_max is None:
+            return alpha
+        return alpha.clamp(min=float(self.alpha_min), max=float(self.alpha_max))
+
+    def forward(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+        node_feats: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if node_feats is None:
+            raise ValueError("Embedding-conditioned repulsion requires node_feats.")
+
+        V_edge = self.base.edge_energy(
+            lengths=lengths,
+            node_attrs=node_attrs,
+            edge_index=edge_index,
+            atomic_numbers=atomic_numbers,
+            r_max=r_max,
+        )
+        alpha = self.edge_alpha(node_feats=node_feats, edge_index=edge_index)
+        gate = self.edge_gate(lengths)
+        V_edge = (
+            V_edge
+            * alpha.to(dtype=V_edge.dtype, device=V_edge.device)
+            * gate.to(dtype=V_edge.dtype, device=V_edge.device)
+        )
+
+        n_nodes = node_attrs.shape[0]
+        return _split_edge_energy_to_nodes(
+            V_edge=V_edge,
+            edge_index=edge_index,
+            n_nodes=n_nodes,
+            assume_directed_double=True,
         )
 
 

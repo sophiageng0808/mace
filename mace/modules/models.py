@@ -82,6 +82,14 @@ class MACE(torch.nn.Module):
         r12_cutoff: float = 0.8,
         r12_switch_width: Optional[float] = None,
         pair_repulsion_r_min: float = 0.2,
+        pair_repulsion_embedding: bool = False,
+        pair_repulsion_alpha_hidden_dim: int = 32,
+        pair_repulsion_symmetric_pair_feat: bool = True,
+        pair_repulsion_gate: str = "cosine",
+        pair_repulsion_r_on: float = 0.6,
+        pair_repulsion_r_cut: float = 1.2,
+        pair_repulsion_alpha_min: Optional[float] = 0.1,
+        pair_repulsion_alpha_max: Optional[float] = 10.0,
         apply_cutoff: bool = True,
         use_reduced_cg: bool = True,
         use_so3: bool = False,
@@ -168,6 +176,9 @@ class MACE(torch.nn.Module):
         # Pair repulsion (ZBL / r12)
         # -------------------------
         if pair_repulsion:
+            repulsion_embedding_dim = None
+            if pair_repulsion_embedding:
+                repulsion_embedding_dim = o3.Irreps(str(hidden_irreps[0])).dim
             self.pair_repulsion_fn = build_pair_repulsion(
                 num_polynomial_cutoff=num_polynomial_cutoff,
                 pair_repulsion_kinds=pair_repulsion_kinds,
@@ -178,6 +189,15 @@ class MACE(torch.nn.Module):
                 r12_cutoff=r12_cutoff,
                 r12_switch_width=r12_switch_width,
                 pair_repulsion_r_min=pair_repulsion_r_min,
+                pair_repulsion_embedding=pair_repulsion_embedding,
+                pair_repulsion_embedding_dim=repulsion_embedding_dim,
+                pair_repulsion_alpha_hidden_dim=pair_repulsion_alpha_hidden_dim,
+                pair_repulsion_symmetric_pair_feat=pair_repulsion_symmetric_pair_feat,
+                pair_repulsion_gate=pair_repulsion_gate,
+                pair_repulsion_r_on=pair_repulsion_r_on,
+                pair_repulsion_r_cut=pair_repulsion_r_cut,
+                pair_repulsion_alpha_min=pair_repulsion_alpha_min,
+                pair_repulsion_alpha_max=pair_repulsion_alpha_max,
             )
 
         if not use_so3:
@@ -363,32 +383,6 @@ class MACE(torch.nn.Module):
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
 
-        # Pair repulsion (make it [n_nodes, n_heads])
-        if hasattr(self, "pair_repulsion_fn"):
-            pair_node_e_scalar = self.pair_repulsion_fn(
-                lengths=lengths,
-                node_attrs=data["node_attrs"],
-                edge_index=data["edge_index"],
-                atomic_numbers=self.atomic_numbers,
-                r_max=self.r_max,
-            )
-            if pair_node_e_scalar.dim() == 2 and pair_node_e_scalar.shape[-1] == 1:
-                pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
-            if is_lammps:
-                pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
-            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
-                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
-                    -1, node_e0.shape[1]
-                )
-            else:
-                pair_node_energy = pair_node_e_scalar
-        else:
-            pair_node_energy = torch.zeros_like(node_e0)
-
-        pair_energy = scatter_sum(
-            src=pair_node_energy, index=data["batch"], dim=0, dim_size=num_graphs
-        )  # [n_graphs,n_heads]
-
         # Extra feature embeddings
         if hasattr(self, "joint_embedding"):
             embedding_features: Dict[str, torch.Tensor] = {}
@@ -408,8 +402,6 @@ class MACE(torch.nn.Module):
                 e0 += embedding_energy
 
         # Interactions
-        energies = [e0, pair_energy]
-        node_energies_list = [node_e0, pair_node_energy]
         node_feats_concat: List[torch.Tensor] = []
 
         for i, (interaction, product) in enumerate(
@@ -433,6 +425,50 @@ class MACE(torch.nn.Module):
                 node_attrs_slice = node_attrs_slice[: lammps_natoms[0]]
             node_feats = product(node_feats=node_feats, sc=sc, node_attrs=node_attrs_slice)
             node_feats_concat.append(node_feats)
+
+        # Pair repulsion (make it [n_nodes, n_heads])
+        repulsion_alpha: Optional[torch.Tensor] = None
+        repulsion_gate: Optional[torch.Tensor] = None
+        if hasattr(self, "pair_repulsion_fn"):
+            rep_node_feats = None
+            if getattr(self.pair_repulsion_fn, "requires_node_feats", False):
+                rep_node_feats = node_feats_concat[-1]
+            if getattr(self.pair_repulsion_fn, "embedding_conditioned", False):
+                if rep_node_feats is None:
+                    raise ValueError(
+                        "Embedding-conditioned repulsion requires node_feats."
+                    )
+                repulsion_alpha = self.pair_repulsion_fn.edge_alpha(
+                    node_feats=rep_node_feats, edge_index=data["edge_index"]
+                )
+                repulsion_gate = self.pair_repulsion_fn.edge_gate(lengths)
+            pair_node_e_scalar = self.pair_repulsion_fn(
+                lengths=lengths,
+                node_attrs=data["node_attrs"],
+                edge_index=data["edge_index"],
+                atomic_numbers=self.atomic_numbers,
+                r_max=self.r_max,
+                node_feats=rep_node_feats,
+            )
+            if pair_node_e_scalar.dim() == 2 and pair_node_e_scalar.shape[-1] == 1:
+                pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
+            if is_lammps:
+                pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
+            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
+                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
+                    -1, node_e0.shape[1]
+                )
+            else:
+                pair_node_energy = pair_node_e_scalar
+        else:
+            pair_node_energy = torch.zeros_like(node_e0)
+
+        pair_energy = scatter_sum(
+            src=pair_node_energy, index=data["batch"], dim=0, dim_size=num_graphs
+        )  # [n_graphs,n_heads]
+
+        energies = [e0, pair_energy]
+        node_energies_list = [node_e0, pair_node_energy]
 
         for i, readout in enumerate(self.readouts):
             feat_idx = -1 if len(self.readouts) == 1 else i
@@ -491,6 +527,9 @@ class MACE(torch.nn.Module):
             "displacement": displacement,
             "hessian": hessian,
             "node_feats": node_feats_out,
+            "repulsion_alpha": repulsion_alpha,
+            "repulsion_gate": repulsion_gate,
+            "repulsion_edge_length": lengths,
         }
 
 
@@ -558,29 +597,6 @@ class ScaleShiftMACE(MACE):
         edge_attrs = self.spherical_harmonics(vectors)
         edge_feats, cutoff = self.radial_embedding(lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers)
 
-        # Pair repulsion (must be [n_nodes, n_heads])
-        if hasattr(self, "pair_repulsion_fn"):
-            pair_node_e_scalar = self.pair_repulsion_fn(
-                lengths=lengths,
-                node_attrs=data["node_attrs"],
-                edge_index=data["edge_index"],
-                atomic_numbers=self.atomic_numbers,
-                r_max=self.r_max,
-            )
-            if pair_node_e_scalar.dim() == 2 and pair_node_e_scalar.shape[-1] == 1:
-                pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
-            if is_lammps:
-                pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
-            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
-                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
-                    -1, node_e0.shape[1]
-                )
-            else:
-                pair_node_energy = pair_node_e_scalar
-        else:
-            pair_node_energy = torch.zeros_like(node_e0)
-        pair_node_energy = _match_node_energy_shape(pair_node_energy)
-
         # Extra feature embeddings
         if hasattr(self, "joint_embedding"):
             embedding_features: Dict[str, torch.Tensor] = {}
@@ -617,6 +633,44 @@ class ScaleShiftMACE(MACE):
                 node_attrs_slice = node_attrs_slice[: lammps_natoms[0]]
             node_feats = product(node_feats=node_feats, sc=sc, node_attrs=node_attrs_slice)
             node_feats_list.append(node_feats)
+
+        # Pair repulsion (must be [n_nodes, n_heads])
+        repulsion_alpha: Optional[torch.Tensor] = None
+        repulsion_gate: Optional[torch.Tensor] = None
+        if hasattr(self, "pair_repulsion_fn"):
+            rep_node_feats = None
+            if getattr(self.pair_repulsion_fn, "requires_node_feats", False):
+                rep_node_feats = node_feats_list[-1]
+            if getattr(self.pair_repulsion_fn, "embedding_conditioned", False):
+                if rep_node_feats is None:
+                    raise ValueError(
+                        "Embedding-conditioned repulsion requires node_feats."
+                    )
+                repulsion_alpha = self.pair_repulsion_fn.edge_alpha(
+                    node_feats=rep_node_feats, edge_index=data["edge_index"]
+                )
+                repulsion_gate = self.pair_repulsion_fn.edge_gate(lengths)
+            pair_node_e_scalar = self.pair_repulsion_fn(
+                lengths=lengths,
+                node_attrs=data["node_attrs"],
+                edge_index=data["edge_index"],
+                atomic_numbers=self.atomic_numbers,
+                r_max=self.r_max,
+                node_feats=rep_node_feats,
+            )
+            if pair_node_e_scalar.dim() == 2 and pair_node_e_scalar.shape[-1] == 1:
+                pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
+            if is_lammps:
+                pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
+            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
+                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
+                    -1, node_e0.shape[1]
+                )
+            else:
+                pair_node_energy = pair_node_e_scalar
+        else:
+            pair_node_energy = torch.zeros_like(node_e0)
+        pair_node_energy = _match_node_energy_shape(pair_node_energy)
 
         for i, readout in enumerate(self.readouts):
             feat_idx = -1 if len(self.readouts) == 1 else i
@@ -674,6 +728,9 @@ class ScaleShiftMACE(MACE):
             "hessian": hessian,
             "displacement": displacement,
             "node_feats": node_feats_out,
+            "repulsion_alpha": repulsion_alpha,
+            "repulsion_gate": repulsion_gate,
+            "repulsion_edge_length": lengths,
         }
 
 # ------------------------------------------------------------------------------------------

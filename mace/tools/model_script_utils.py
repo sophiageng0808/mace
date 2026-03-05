@@ -46,6 +46,18 @@ def _get_repulsion_kwargs(args):
         r12_switch_width=getattr(args, "r12_switch_width", None),
         pair_repulsion_mode=int(getattr(args, "pair_repulsion_mode", 0)),
         pair_repulsion_r_min=float(getattr(args, "pair_repulsion_r_min", 0.0)),
+        pair_repulsion_embedding=bool(getattr(args, "pair_repulsion_embedding", False)),
+        pair_repulsion_alpha_hidden_dim=int(
+            getattr(args, "pair_repulsion_alpha_hidden_dim", 32)
+        ),
+        pair_repulsion_symmetric_pair_feat=bool(
+            getattr(args, "pair_repulsion_symmetric_pair_feat", True)
+        ),
+        pair_repulsion_gate=str(getattr(args, "pair_repulsion_gate", "cosine")),
+        pair_repulsion_r_on=float(getattr(args, "pair_repulsion_r_on", 0.6)),
+        pair_repulsion_r_cut=float(getattr(args, "pair_repulsion_r_cut", 1.2)),
+        pair_repulsion_alpha_min=getattr(args, "pair_repulsion_alpha_min", 0.1),
+        pair_repulsion_alpha_max=getattr(args, "pair_repulsion_alpha_max", 10.0),
     )
     return rep_kwargs
 

@@ -68,12 +68,20 @@ REL_DROP_TOL = 0.01  # monotonicity tolerance as fraction of curve span
 # -----------------------------
 # Repulsion models (ABSOLUTE PATHS)
 # -----------------------------
-JOBS_ROOT = Path(f"/scratch/{USER}/mace_worktrees/jobs_repulsion")
+JOBS_ROOT = Path(f"/scratch/{USER}/mace_worktrees/job_repulsion_v2")
 REPULSION_MODELS = [
-    # ("baseline_norepulsion", str(JOBS_ROOT / "baseline" / "baseline_norepulsion.model")),
-    ("r12",     "/scratch/sophiag/mace_worktrees/jobs_repulsion/309421_2_repulsion_r12/repulsion_r12.model"),
-    ("zbl",     "/scratch/sophiag/mace_worktrees/jobs_repulsion/309419_1_repulsion_zbl/repulsion_zbl.model"),
-    ("zbl_r12", "/scratch/sophiag/mace_worktrees/jobs_repulsion/309413_3_repulsion_zbl_r12/repulsion_zbl_r12.model"),
+    #v1
+    # ("r12",     str(JOBS_ROOT / "313013_2_repulsion_r12" / "repulsion_r12.model")),
+    # ("zbl",     str(JOBS_ROOT / "313015_1_repulsion_zbl" / "repulsion_zbl.model")),
+    # ("zbl_r12", str(JOBS_ROOT / "312989_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")),
+    #v2
+    # ("r12",     str(JOBS_ROOT / "313890_2_repulsion_r12" / "repulsion_r12.model")),
+    # ("zbl",     str(JOBS_ROOT / "313889_1_repulsion_zbl" / "repulsion_zbl.model")),
+    # ("zbl_r12", str(JOBS_ROOT / "313854_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")),
+    #v3
+    ("r12",     str(JOBS_ROOT / "315223_2_repulsion_r12" / "repulsion_r12.model")),
+    ("zbl",     str(JOBS_ROOT / "315222_1_repulsion_zbl" / "repulsion_zbl.model")),
+    ("zbl_r12", str(JOBS_ROOT / "315150_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")),
 ]
 
 # -----------------------------

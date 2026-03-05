@@ -277,6 +277,21 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         cfg["pair_repulsion"] = True
         cfg["pair_repulsion_kinds"] = getattr(rep, "kinds", None)
         cfg["pair_repulsion_mode"] = int(getattr(rep, "mode", 0))
+        cfg["pair_repulsion_embedding"] = bool(
+            getattr(rep, "embedding_conditioned", False)
+        )
+        if cfg["pair_repulsion_embedding"]:
+            cfg["pair_repulsion_alpha_hidden_dim"] = int(
+                getattr(rep, "alpha_hidden_dim", 32)
+            )
+            cfg["pair_repulsion_symmetric_pair_feat"] = bool(
+                getattr(rep, "symmetric_pair_feat", True)
+            )
+            cfg["pair_repulsion_gate"] = str(getattr(rep, "gate", "cosine"))
+            cfg["pair_repulsion_r_on"] = float(getattr(rep, "r_on", 0.6))
+            cfg["pair_repulsion_r_cut"] = float(getattr(rep, "r_cut", 1.2))
+            cfg["pair_repulsion_alpha_min"] = getattr(rep, "alpha_min", 0.1)
+            cfg["pair_repulsion_alpha_max"] = getattr(rep, "alpha_max", 10.0)
 
         zbl = getattr(rep, "zbl", None)
         if zbl is not None and hasattr(zbl, "p"):
@@ -701,6 +716,36 @@ def convert_from_json_format(dict_input):
         )
     if "pair_repulsion_r_min" in dict_input:
         dict_output["pair_repulsion_r_min"] = float(dict_input["pair_repulsion_r_min"])
+    if "pair_repulsion_embedding" in dict_input:
+        dict_output["pair_repulsion_embedding"] = _parse_bool(
+            dict_input["pair_repulsion_embedding"]
+        )
+    if "pair_repulsion_alpha_hidden_dim" in dict_input:
+        dict_output["pair_repulsion_alpha_hidden_dim"] = int(
+            dict_input["pair_repulsion_alpha_hidden_dim"]
+        )
+    if "pair_repulsion_symmetric_pair_feat" in dict_input:
+        dict_output["pair_repulsion_symmetric_pair_feat"] = _parse_bool(
+            dict_input["pair_repulsion_symmetric_pair_feat"]
+        )
+    if "pair_repulsion_gate" in dict_input:
+        dict_output["pair_repulsion_gate"] = str(dict_input["pair_repulsion_gate"])
+    if "pair_repulsion_r_on" in dict_input:
+        dict_output["pair_repulsion_r_on"] = float(dict_input["pair_repulsion_r_on"])
+    if "pair_repulsion_r_cut" in dict_input:
+        dict_output["pair_repulsion_r_cut"] = float(dict_input["pair_repulsion_r_cut"])
+    if "pair_repulsion_alpha_min" in dict_input:
+        dict_output["pair_repulsion_alpha_min"] = (
+            None
+            if dict_input["pair_repulsion_alpha_min"] in (None, "None")
+            else float(dict_input["pair_repulsion_alpha_min"])
+        )
+    if "pair_repulsion_alpha_max" in dict_input:
+        dict_output["pair_repulsion_alpha_max"] = (
+            None
+            if dict_input["pair_repulsion_alpha_max"] in (None, "None")
+            else float(dict_input["pair_repulsion_alpha_max"])
+        )
     if "embedding_specs" in dict_input:
         specs = dict_input["embedding_specs"]
         if specs in (None, "None"):
@@ -933,6 +978,10 @@ def get_loss_fn(
         )
     else:
         loss_fn = modules.WeightedEnergyForcesLoss(energy_weight=1.0, forces_weight=1.0)
+    if getattr(args, "pair_repulsion_alpha_reg", 0.0) > 0.0:
+        loss_fn = modules.RepulsionAlphaRegularizedLoss(
+            base_loss=loss_fn, alpha_reg_weight=args.pair_repulsion_alpha_reg
+        )
     return loss_fn
 
 

@@ -2,11 +2,11 @@
 #SBATCH --job-name=mace_repulsion_modes
 #SBATCH --output=outslurm/%x_%A_%a.out
 #SBATCH --error=outslurm/%x_%A_%a.err
-#SBATCH --time=12:00:00
-#SBATCH --array=3
+#SBATCH --time=2:00:00
+#SBATCH --array=1-3
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --gres=gpu:1
+#SBATCH --partition=compute_full_node
+#SBATCH --gpus-per-node=4
 
 set -euo pipefail
 mkdir -p outslurm
@@ -22,9 +22,9 @@ mkdir -p outslurm
 # -----------------------------
 # Paths / env
 # -----------------------------
-BASE_REPO="/h/400/sophiageng/mace"
-REPULSION_WT="/h/400/sophiageng/mace_worktrees/repulsion"
-RUNS_ROOT="/h/400/sophiageng/mace_worktrees/jobs_repulsion"
+BASE_REPO="/scratch/sophiag/mace"
+REPULSION_WT="/scratch/sophiag/mace_branches/exp-repulsion-v2"
+RUNS_ROOT="/scratch/sophiag/mace_worktrees/job_repulsion_v2"
 
 VENV_ACTIVATE="$BASE_REPO/.macevenv/bin/activate"
 
@@ -38,10 +38,13 @@ R_MAX=4.0
 RADIAL_MLP="[32,32]"
 PATIENCE=120
 SEED=0
-LR=0.003
+LR=0.001
 SCHEDULER_PATIENCE=10
 LR_FACTOR=0.5
 ZBL_SCALE=0.1
+PAIR_REP_SCALE=0.3
+PAIR_REP_TRAINABLE="True"
+EMA_DECAY=0.999
 
 BATCH_SIZE=1
 DEFAULT_DTYPE="float32"
@@ -62,6 +65,7 @@ export BLIS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:128"
 
 export TORCH_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+export WANDB_MODE="offline"
 
 # Activate venv
 source "$VENV_ACTIVATE"
@@ -80,6 +84,14 @@ fi
 
 NAME=""
 PAIR_FLAGS=""
+PAIR_REPULSION_FLAGS=""
+PAIR_EMB_FLAGS="--pair_repulsion_embedding --pair_repulsion_symmetric_pair_feat True --pair_repulsion_gate cosine --pair_repulsion_r_on 0.60 --pair_repulsion_r_cut 1.20 --pair_repulsion_alpha_reg 1e-3 --pair_repulsion_alpha_min 0.1 --pair_repulsion_alpha_max 10.0"
+# Tuned embedding-conditioned repulsion:
+# - Disable gate (avoid mid-range suppression)
+# - Narrow alpha clamp around 1.0
+# - Reduce alpha MLP capacity + stronger regularization
+PAIR_EMB_TUNED="--pair_repulsion_embedding --pair_repulsion_symmetric_pair_feat True --pair_repulsion_gate none --pair_repulsion_alpha_hidden_dim 16 --pair_repulsion_alpha_reg 1e-2 --pair_repulsion_alpha_min 0.8 --pair_repulsion_alpha_max 1.2"
+
 
 case "$TASK" in
   0)
@@ -87,16 +99,16 @@ case "$TASK" in
     ;;
   1)
     NAME="repulsion_zbl"
-    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl --pair_repulsion_mode 1 --zbl_scale $ZBL_SCALE"
+    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl --pair_repulsion_mode 1 --zbl_scale $ZBL_SCALE $PAIR_EMB_TUNED"
     ;;
   2)
     NAME="repulsion_r12"
-    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds r12 --pair_repulsion_mode 2 --r12_scale 1.0 --r12_cutoff 0.8"
+    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds r12 --pair_repulsion_mode 2 --r12_scale 1.0 --r12_cutoff 0.8 $PAIR_EMB_TUNED"
     ;;
   3)
     NAME="repulsion_zbl_r12"
     # IMPORTANT: your argparse choices require repeated flag
-    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl --pair_repulsion_kinds r12 --pair_repulsion_mode 3 --zbl_scale $ZBL_SCALE --r12_scale 1.0 --r12_cutoff 0.8"
+    PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl --pair_repulsion_kinds r12 --pair_repulsion_mode 3 --zbl_scale $ZBL_SCALE --r12_scale 1.0 --r12_cutoff 0.8 $PAIR_EMB_TUNED"
     ;;
   *)
     echo "Unknown task id: $TASK (expected 0-3)"
@@ -136,6 +148,16 @@ esac
     NUM_WORKERS_FLAG="--num_workers 0"
   fi
 
+  if echo "$HELP_TEXT" | grep -q -- "--pair_repulsion_scale"; then
+    PAIR_REPULSION_FLAGS="$PAIR_REPULSION_FLAGS --pair_repulsion_scale $PAIR_REP_SCALE"
+  fi
+  if echo "$HELP_TEXT" | grep -q -- "--pair_repulsion_trainable"; then
+    PAIR_REPULSION_FLAGS="$PAIR_REPULSION_FLAGS --pair_repulsion_trainable $PAIR_REP_TRAINABLE"
+  fi
+  if [ -n "$PAIR_REPULSION_FLAGS" ]; then
+    PAIR_FLAGS="$PAIR_FLAGS $PAIR_REPULSION_FLAGS"
+  fi
+
   # -----------------------------
   # Debug: verify what code + what memory limit you got
   # -----------------------------
@@ -169,7 +191,7 @@ print("radial from     :", inspect.getsourcefile(r))
 print("PYTHONPATH      :", os.environ.get("PYTHONPATH"))
 PY
 
-  mace_run_train --help | grep -E "pair_repulsion|pair_repulsion_kinds|pair_repulsion_mode|r12_scale|r12_cutoff|zbl_p|zbl_scale|pair_repulsion_r_min" || true
+  mace_run_train --help | grep -E "pair_repulsion|pair_repulsion_kinds|pair_repulsion_mode|r12_scale|r12_cutoff|zbl_p|zbl_scale|pair_repulsion_r_min|foundation_model" || true
 
   # -----------------------------
   # Train
@@ -199,6 +221,8 @@ PY
     --max_L "$MAX_L" \
     --radial_MLP "$RADIAL_MLP" \
     --device cuda \
+    --ema \
+    --ema_decay "$EMA_DECAY" \
     --wandb \
     --wandb_name "$NAME" \
     $SAVE_EVERY_FLAG \

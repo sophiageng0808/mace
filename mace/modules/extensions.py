@@ -130,19 +130,6 @@ class MACELES(ScaleShiftMACE):
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
 
-        if hasattr(self, "pair_repulsion_fn"):
-            pair_node_energy = self.pair_repulsion_fn(
-                lengths=lengths,
-                node_attrs=data["node_attrs"],
-                edge_index=data["edge_index"],
-                atomic_numbers=self.atomic_numbers,
-                r_max=self.r_max,
-            )
-            if is_lammps:
-                pair_node_energy = pair_node_energy[: lammps_natoms[0]]
-        else:
-            pair_node_energy = torch.zeros_like(node_e0)
-
         # Embeddings of additional features
         if hasattr(self, "joint_embedding"):
             embedding_features: Dict[str, torch.Tensor] = {}
@@ -165,7 +152,6 @@ class MACELES(ScaleShiftMACE):
                 e0 += embedding_energy
 
         # Interactions
-        node_es_list = [pair_node_energy]
         node_feats_list: List[torch.Tensor] = []
         node_qs_list: List[torch.Tensor] = []
 
@@ -192,6 +178,36 @@ class MACELES(ScaleShiftMACE):
                 node_feats=node_feats, sc=sc, node_attrs=node_attrs_slice
             )
             node_feats_list.append(node_feats)
+
+        repulsion_alpha: Optional[torch.Tensor] = None
+        repulsion_gate: Optional[torch.Tensor] = None
+        if hasattr(self, "pair_repulsion_fn"):
+            rep_node_feats = None
+            if getattr(self.pair_repulsion_fn, "requires_node_feats", False):
+                rep_node_feats = node_feats_list[-1]
+            if getattr(self.pair_repulsion_fn, "embedding_conditioned", False):
+                if rep_node_feats is None:
+                    raise ValueError(
+                        "Embedding-conditioned repulsion requires node_feats."
+                    )
+                repulsion_alpha = self.pair_repulsion_fn.edge_alpha(
+                    node_feats=rep_node_feats, edge_index=data["edge_index"]
+                )
+                repulsion_gate = self.pair_repulsion_fn.edge_gate(lengths)
+            pair_node_energy = self.pair_repulsion_fn(
+                lengths=lengths,
+                node_attrs=data["node_attrs"],
+                edge_index=data["edge_index"],
+                atomic_numbers=self.atomic_numbers,
+                r_max=self.r_max,
+                node_feats=rep_node_feats,
+            )
+            if is_lammps:
+                pair_node_energy = pair_node_energy[: lammps_natoms[0]]
+        else:
+            pair_node_energy = torch.zeros_like(node_e0)
+
+        node_es_list = [pair_node_energy]
 
         for i, (readout, les_readout) in enumerate(
             zip(self.readouts, self.les_readouts)
@@ -271,4 +287,7 @@ class MACELES(ScaleShiftMACE):
             "les_energy": les_energy,
             "latent_charges": les_q,
             "BEC": les_result["BEC"],
+            "repulsion_alpha": repulsion_alpha,
+            "repulsion_gate": repulsion_gate,
+            "repulsion_edge_length": lengths,
         }

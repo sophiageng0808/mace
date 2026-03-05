@@ -202,6 +202,61 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.2,
     )
+    parser.add_argument(
+        "--pair_repulsion_embedding",
+        help="condition repulsion scale on node embeddings",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--pair_repulsion_alpha_hidden_dim",
+        help="hidden size for embedding-conditioned repulsion MLP",
+        type=int,
+        default=32,
+    )
+    parser.add_argument(
+        "--pair_repulsion_symmetric_pair_feat",
+        help="use symmetric pair features for embedding-conditioned repulsion",
+        type=str2bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--pair_repulsion_gate",
+        help="gate for embedding-conditioned repulsion",
+        type=str,
+        default="cosine",
+        choices=["cosine", "none"],
+    )
+    parser.add_argument(
+        "--pair_repulsion_r_on",
+        help="start distance (Ang) for repulsion gate",
+        type=float,
+        default=0.60,
+    )
+    parser.add_argument(
+        "--pair_repulsion_r_cut",
+        help="cutoff distance (Ang) for repulsion gate",
+        type=float,
+        default=1.20,
+    )
+    parser.add_argument(
+        "--pair_repulsion_alpha_reg",
+        help="alpha regularization strength (0 disables)",
+        type=float,
+        default=1e-3,
+    )
+    parser.add_argument(
+        "--pair_repulsion_alpha_min",
+        help="minimum clamp for alpha (None disables)",
+        type=check_float_or_none,
+        default=0.1,
+    )
+    parser.add_argument(
+        "--pair_repulsion_alpha_max",
+        help="maximum clamp for alpha (None disables)",
+        type=check_float_or_none,
+        default=10.0,
+    )
 
     parser.add_argument(
         "--zbl_p",

@@ -31,6 +31,7 @@ from .radial import (
     AgnesiTransform,
     BesselBasis,
     ChebychevBasis,
+    EmbeddingConditionedPairRepulsion,
     GaussianBasis,
     PairRepulsionSwitch,
     PolynomialCutoff,
@@ -52,7 +53,16 @@ def build_pair_repulsion(
     r12_cutoff: Optional[float],
     r12_switch_width: Optional[float],
     pair_repulsion_r_min: float,
-) -> PairRepulsionSwitch:
+    pair_repulsion_embedding: bool = False,
+    pair_repulsion_embedding_dim: Optional[int] = None,
+    pair_repulsion_alpha_hidden_dim: int = 32,
+    pair_repulsion_symmetric_pair_feat: bool = True,
+    pair_repulsion_gate: str = "cosine",
+    pair_repulsion_r_on: float = 0.6,
+    pair_repulsion_r_cut: float = 1.2,
+    pair_repulsion_alpha_min: Optional[float] = 0.1,
+    pair_repulsion_alpha_max: Optional[float] = 10.0,
+) -> torch.nn.Module:
     if pair_repulsion_kinds is None:
         pair_repulsion_kinds = ["zbl"]
     if isinstance(pair_repulsion_kinds, str):
@@ -75,12 +85,27 @@ def build_pair_repulsion(
         r12_cutoff=r12_cutoff,
         r12_switch_width=r12_switch_width,
     )
-    return PairRepulsionSwitch(
+    base = PairRepulsionSwitch(
         kinds=pair_repulsion_kinds,
         zbl=zbl_mod,
         r12=r12_mod,
         mode=pair_repulsion_mode,
     )
+    if pair_repulsion_embedding:
+        if pair_repulsion_embedding_dim is None:
+            raise ValueError("pair_repulsion_embedding_dim must be provided.")
+        return EmbeddingConditionedPairRepulsion(
+            base=base,
+            embedding_dim=pair_repulsion_embedding_dim,
+            alpha_hidden_dim=pair_repulsion_alpha_hidden_dim,
+            symmetric_pair_feat=pair_repulsion_symmetric_pair_feat,
+            gate=pair_repulsion_gate,
+            r_on=pair_repulsion_r_on,
+            r_cut=pair_repulsion_r_cut,
+            alpha_min=pair_repulsion_alpha_min,
+            alpha_max=pair_repulsion_alpha_max,
+        )
+    return base
 
 @compile_mode("script")
 class LinearNodeEmbeddingBlock(torch.nn.Module):

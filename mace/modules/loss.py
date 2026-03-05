@@ -599,6 +599,36 @@ class WeightedEnergyForcesDipoleLoss(torch.nn.Module):
         )
 
 
+class RepulsionAlphaRegularizedLoss(torch.nn.Module):
+    def __init__(self, base_loss: torch.nn.Module, alpha_reg_weight: float) -> None:
+        super().__init__()
+        self.base_loss = base_loss
+        self.register_buffer(
+            "alpha_reg_weight",
+            torch.tensor(alpha_reg_weight, dtype=torch.get_default_dtype()),
+        )
+
+    def forward(
+        self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+    ) -> torch.Tensor:
+        loss = self.base_loss(ref=ref, pred=pred, ddp=ddp)
+        if self.alpha_reg_weight.item() <= 0:
+            return loss
+        alpha = pred.get("repulsion_alpha", None)
+        gate = pred.get("repulsion_gate", None)
+        if alpha is None or gate is None:
+            return loss
+        raw = gate * torch.square(alpha - 1.0)
+        reg = reduce_loss(raw, ddp)
+        return loss + self.alpha_reg_weight * reg
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}(base_loss={self.base_loss}, "
+            f"alpha_reg_weight={self.alpha_reg_weight:.3f})"
+        )
+
+
 class WeightedEnergyForcesL1L2Loss(torch.nn.Module):
     def __init__(self, energy_weight=1.0, forces_weight=1.0) -> None:
         super().__init__()
