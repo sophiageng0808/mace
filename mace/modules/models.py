@@ -478,6 +478,8 @@ class MACE(torch.nn.Module):
                 cell=cell,
             )
 
+        # TODO@Sophia: clamp the energy and the forces here to avoid inf or nan
+
         return {
             "energy": total_energy,
             "node_energy": node_energy,

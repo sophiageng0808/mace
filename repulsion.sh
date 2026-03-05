@@ -3,10 +3,10 @@
 #SBATCH --output=outslurm/%x_%A_%a.out
 #SBATCH --error=outslurm/%x_%A_%a.err
 #SBATCH --time=12:00:00
-#SBATCH --array=3
+#SBATCH --array=0-3
+#SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --gres=gpu:1
+#SBATCH --gpus-per-node=1
 
 set -euo pipefail
 mkdir -p outslurm
@@ -22,9 +22,18 @@ mkdir -p outslurm
 # -----------------------------
 # Paths / env
 # -----------------------------
-BASE_REPO="/h/400/sophiageng/mace"
-REPULSION_WT="/h/400/sophiageng/mace_worktrees/repulsion"
-RUNS_ROOT="/h/400/sophiageng/mace_worktrees/jobs_repulsion"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUBMIT_DIR="${SLURM_SUBMIT_DIR:-}"
+
+if [ -d "/scratch/$USER/mace" ]; then
+  DEFAULT_BASE="/scratch/$USER/mace"
+else
+  DEFAULT_BASE="$SCRIPT_DIR"
+fi
+
+BASE_REPO="${BASE_REPO:-$DEFAULT_BASE}"
+REPULSION_WT="${REPULSION_WT:-${SUBMIT_DIR:-$SCRIPT_DIR}}"
+RUNS_ROOT="${RUNS_ROOT:-/scratch/$USER/mace_worktrees/jobs_repulsion}"
 
 VENV_ACTIVATE="$BASE_REPO/.macevenv/bin/activate"
 
@@ -45,7 +54,6 @@ ZBL_SCALE=0.1
 
 BATCH_SIZE=1
 DEFAULT_DTYPE="float32"
-# Moderate capacity to train properly without OOM
 NUM_CHANNELS=32
 NUM_INTERACTIONS=2
 CORRELATION=2
@@ -67,14 +75,15 @@ export TORCH_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 source "$VENV_ACTIVATE"
 
 # Ensure correct code import
-export PYTHONPATH="$REPULSION_WT:${PYTHONPATH:-}"
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="$REPULSION_WT:$REPULSION_WT/mace:${PYTHONPATH:-}"
 
 # -----------------------------
 # Task mapping (array id)
 # -----------------------------
 TASK="${SLURM_ARRAY_TASK_ID:-}"
 if [ -z "$TASK" ]; then
-  echo "SLURM_ARRAY_TASK_ID is not set. Submit with: sbatch --array=3 repulsion.sh"
+  echo "SLURM_ARRAY_TASK_ID is not set. Submit with: sbatch --array=0-3 repulsion.sh"
   exit 1
 fi
 
@@ -117,13 +126,48 @@ esac
   mkdir -p ./checkpoints
   export MACE_CHECKPOINT_DIR="$RUN_DIR/checkpoints"
 
+  # Avoid permission errors for matplotlib/fontconfig caches on shared systems
+  export MPLCONFIGDIR="$RUN_DIR/.mplconfig"
+  export XDG_CACHE_HOME="$RUN_DIR/.cache"
+  export FC_CACHEDIR="$XDG_CACHE_HOME/fontconfig"
+  mkdir -p "$MPLCONFIGDIR" "$XDG_CACHE_HOME" "$FC_CACHEDIR"
+
+  # W&B: force offline on compute nodes (can override via env)
+  export WANDB_MODE="${WANDB_MODE:-offline}"
+  export WANDB_DISABLED="${WANDB_DISABLED:-false}"
+  # W&B auth: source env file or load key file; keep offline if missing
+  WANDB_ENV_FILE="${WANDB_ENV_FILE:-/home/$USER/.wandb_env}"
+  WANDB_KEY_FILE="${WANDB_KEY_FILE:-/scratch/$USER/.wandb_api_key}"
+  if [ -f "$WANDB_ENV_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$WANDB_ENV_FILE"
+  fi
+  if [ -z "${WANDB_API_KEY:-}" ] && [ -f "$WANDB_KEY_FILE" ]; then
+    export WANDB_API_KEY="$(<"$WANDB_KEY_FILE")"
+  fi
+  if [ -z "${WANDB_API_KEY:-}" ]; then
+    if [ "${WANDB_MODE}" != "offline" ]; then
+      export WANDB_MODE="offline"
+    fi
+    export WANDB_DISABLED="false"
+  fi
+
+  # W&B destination (set these in env or defaults here)
+  export WANDB_PROJECT="${WANDB_PROJECT:-mace}"
+  export WANDB_ENTITY="${WANDB_ENTITY:-}"
+  if [ -z "${WANDB_API_KEY:-}" ]; then
+    echo "[wandb] WANDB_API_KEY not found; logging disabled (offline)."
+  else
+    echo "[wandb] WANDB_PROJECT=${WANDB_PROJECT} WANDB_ENTITY=${WANDB_ENTITY:-<default>}"
+  fi
+
   # -----------------------------
   # Detect checkpoint + num_workers flags
   # -----------------------------
   SAVE_EVERY_FLAG=""
   NUM_WORKERS_FLAG=""
 
-  HELP_TEXT="$(mace_run_train --help 2>&1 || true)"
+  HELP_TEXT="$(PYTHONPATH="$REPULSION_WT:$REPULSION_WT/mace:${PYTHONPATH:-}" python -m mace.cli.run_train --help 2>&1 || true)"
   if echo "$HELP_TEXT" | grep -q -- "--save_every"; then
     SAVE_EVERY_FLAG="--save_every 10"
   elif echo "$HELP_TEXT" | grep -q -- "--checkpoint_interval"; then
@@ -135,6 +179,8 @@ esac
   if echo "$HELP_TEXT" | grep -q -- "--num_workers"; then
     NUM_WORKERS_FLAG="--num_workers 0"
   fi
+
+  # Drop repulsion args if this mace_run_train doesn't support them
 
   # -----------------------------
   # Debug: verify what code + what memory limit you got
@@ -169,12 +215,12 @@ print("radial from     :", inspect.getsourcefile(r))
 print("PYTHONPATH      :", os.environ.get("PYTHONPATH"))
 PY
 
-  mace_run_train --help | grep -E "pair_repulsion|pair_repulsion_kinds|pair_repulsion_mode|r12_scale|r12_cutoff|zbl_p|zbl_scale|pair_repulsion_r_min" || true
+  PYTHONPATH="$REPULSION_WT:$REPULSION_WT/mace:${PYTHONPATH:-}" python -m mace.cli.run_train --help | grep -E "pair_repulsion|pair_repulsion_kinds|pair_repulsion_mode|r12_scale|r12_cutoff|zbl_p|zbl_scale|pair_repulsion_r_min" || true
 
   # -----------------------------
   # Train
   # -----------------------------
-  mace_run_train \
+  PYTHONPATH="$REPULSION_WT:$REPULSION_WT/mace:${PYTHONPATH:-}" python -m mace.cli.run_train \
     --name "$NAME" \
     --train_file "$DATA" \
     --valid_file "$DATA" \
@@ -201,6 +247,8 @@ PY
     --device cuda \
     --wandb \
     --wandb_name "$NAME" \
+    --wandb_project "${WANDB_PROJECT}" \
+    ${WANDB_ENTITY:+--wandb_entity "$WANDB_ENTITY"} \
     $SAVE_EVERY_FLAG \
     $NUM_WORKERS_FLAG \
     $PAIR_FLAGS

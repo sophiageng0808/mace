@@ -320,7 +320,7 @@ class ZBLRepulsion(torch.nn.Module):
         src = edge_index[0]
         dst = edge_index[1]
 
-        r = torch.clamp(lengths, min=self.r_min)
+        r = torch.clamp(lengths, min=self.r_min) # TODO@Sophia: suss
         dtype = r.dtype
         device = r.device
 
