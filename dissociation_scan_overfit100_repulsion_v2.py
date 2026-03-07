@@ -68,7 +68,7 @@ REL_DROP_TOL = 0.01  # monotonicity tolerance as fraction of curve span
 # -----------------------------
 # Repulsion models (ABSOLUTE PATHS)
 # -----------------------------
-JOBS_ROOT = Path(f"/scratch/{USER}/mace_worktrees/job_repulsion_v2")
+#JOBS_ROOT = Path(f"/scratch/{USER}/mace_worktrees/job_repulsion_v2")
 REPULSION_MODELS = [
     #v1
     # ("r12",     str(JOBS_ROOT / "313013_2_repulsion_r12" / "repulsion_r12.model")),
@@ -78,10 +78,43 @@ REPULSION_MODELS = [
     # ("r12",     str(JOBS_ROOT / "313890_2_repulsion_r12" / "repulsion_r12.model")),
     # ("zbl",     str(JOBS_ROOT / "313889_1_repulsion_zbl" / "repulsion_zbl.model")),
     # ("zbl_r12", str(JOBS_ROOT / "313854_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")),
-    #v3
-    ("r12",     str(JOBS_ROOT / "315223_2_repulsion_r12" / "repulsion_r12.model")),
-    ("zbl",     str(JOBS_ROOT / "315222_1_repulsion_zbl" / "repulsion_zbl.model")),
-    ("zbl_r12", str(JOBS_ROOT / "315150_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")),
+    # #v3
+    # ("r12",     str(JOBS_ROOT / "315223_2_repulsion_r12" / "repulsion_r12.model")),
+    # ("zbl",     str(JOBS_ROOT / "315222_1_repulsion_zbl" / "repulsion_zbl.model")),
+    # ("zbl_r12", str(JOBS_ROOT / "315150_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")),
+    # after fixing clamp
+    # ("r12",     str(JOBS_ROOT / "316587_2_repulsion_r12" / "repulsion_r12.model")),
+    # ("zbl",     str(JOBS_ROOT / "316586_1_repulsion_zbl" / "repulsion_zbl.model")),
+    # ("zbl_r12", str(JOBS_ROOT / "316579_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")), 
+    # finetune 1
+    # (
+    #     "zbl_r12",
+    #     "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_1/"
+    #     "319980_3_set1_repulsion_zbl_r12/set1_repulsion_zbl_r12.model",
+    # ),
+    # (
+    #     "zbl",
+    #     "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_1/"
+    #     "319981_1_set1_repulsion_zbl/set1_repulsion_zbl.model",
+    # ),
+    # (
+    #     "r12",
+    #     "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_1/"
+    #     "319982_2_set1_repulsion_r12/set1_repulsion_r12.model",
+    # ),
+    #finetune 2
+    (
+        "zbl_r12",
+        "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_2/319983_3_set2_repulsion_zbl_r12/set2_repulsion_zbl_r12.model",
+    ),
+    (
+        "zbl",
+        "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_2/319984_1_set2_repulsion_zbl/set2_repulsion_zbl.model",
+    ),
+    (
+        "r12",
+        "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_2/319985_2_set2_repulsion_r12/set2_repulsion_r12.model",
+    ),
 ]
 
 # -----------------------------

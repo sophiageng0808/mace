@@ -4,8 +4,8 @@
 #SBATCH --error=outslurm/%x_%A_%a.err
 #SBATCH --partition=compute
 #SBATCH --nodes=1
+#SBATCH --cpus-per-task=4
 #SBATCH --gpus-per-node=1
-#SBATCH --cpus-per-task=8
 #SBATCH --time=15:00:00
 
 set -euo pipefail

@@ -4,9 +4,9 @@
 #SBATCH --error=outslurm/%x_%A_%a.err
 #SBATCH --time=2:00:00
 #SBATCH --array=1-3
+#SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=compute_full_node
-#SBATCH --gpus-per-node=4
+#SBATCH --gpus-per-node=1
 
 set -euo pipefail
 mkdir -p outslurm

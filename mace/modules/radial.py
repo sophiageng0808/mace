@@ -344,7 +344,7 @@ class ZBLRepulsion(torch.nn.Module):
         src = edge_index[0]
         dst = edge_index[1]
 
-        r = torch.clamp(lengths, min=self.r_min)
+        r = lengths
         dtype = r.dtype
         device = r.device
 
@@ -427,7 +427,7 @@ class R12Repulsion(torch.nn.Module):
         atomic_numbers: torch.Tensor,
         r_max: torch.Tensor,
     ) -> torch.Tensor:
-        r = torch.clamp(lengths, min=self.r_min)
+        r = lengths
         dtype = r.dtype
         device = r.device
 

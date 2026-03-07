@@ -502,6 +502,19 @@ class MACE(torch.nn.Module):
             compute_edge_forces=compute_edge_forces,
         )
 
+        clamp_value = 1.0e6
+        total_energy = torch.nan_to_num(
+            total_energy, posinf=clamp_value, neginf=-clamp_value
+        ).clamp(-clamp_value, clamp_value)
+        if forces is not None:
+            forces = torch.nan_to_num(
+                forces, posinf=clamp_value, neginf=-clamp_value
+            ).clamp(-clamp_value, clamp_value)
+        if edge_forces is not None:
+            edge_forces = torch.nan_to_num(
+                edge_forces, posinf=clamp_value, neginf=-clamp_value
+            ).clamp(-clamp_value, clamp_value)
+
         atomic_virials: Optional[torch.Tensor] = None
         atomic_stresses: Optional[torch.Tensor] = None
         if compute_atomic_stresses and edge_forces is not None:
