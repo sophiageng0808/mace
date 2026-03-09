@@ -74,6 +74,48 @@ REPULSION_MODELS = [
     # ("r12",     str(JOBS_ROOT / "313013_2_repulsion_r12" / "repulsion_r12.model")),
     # ("zbl",     str(JOBS_ROOT / "313015_1_repulsion_zbl" / "repulsion_zbl.model")),
     # ("zbl_r12", str(JOBS_ROOT / "312989_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")),
+    # ablation v1.1
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.1_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.1_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.1_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.1_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.1_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.1_zbl_r12/repulsion_zbl_r12_raw.model"),
+    # ablation v1.2
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.2_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.2_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.2_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.2_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.2_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.2_zbl_r12/repulsion_zbl_r12_raw.model"),
+    # ablation v1.3
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.3_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.3_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.3_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.3_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.3_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.3_zbl_r12/repulsion_zbl_r12_raw.model"),
+    # ablation v1.4
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.4_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.4_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.4_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.4_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.4_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.4_zbl_r12/repulsion_zbl_r12_raw.model"),
+    # ablation v1.5
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.5_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.5_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.5_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.5_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.5_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.5_zbl_r12/repulsion_zbl_r12_raw.model"),
+    # ablation v1.6
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.6_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.6_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.6_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.6_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.6_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v1.6_zbl_r12/repulsion_zbl_r12_raw.model"),
     #v2
     # ("r12",     str(JOBS_ROOT / "313890_2_repulsion_r12" / "repulsion_r12.model")),
     # ("zbl",     str(JOBS_ROOT / "313889_1_repulsion_zbl" / "repulsion_zbl.model")),
@@ -86,35 +128,139 @@ REPULSION_MODELS = [
     # ("r12",     str(JOBS_ROOT / "316587_2_repulsion_r12" / "repulsion_r12.model")),
     # ("zbl",     str(JOBS_ROOT / "316586_1_repulsion_zbl" / "repulsion_zbl.model")),
     # ("zbl_r12", str(JOBS_ROOT / "316579_3_repulsion_zbl_r12" / "repulsion_zbl_r12.model")), 
-    # finetune 1
-    # (
-    #     "zbl_r12",
-    #     "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_1/"
-    #     "319980_3_set1_repulsion_zbl_r12/set1_repulsion_zbl_r12.model",
-    # ),
-    # (
-    #     "zbl",
-    #     "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_1/"
-    #     "319981_1_set1_repulsion_zbl/set1_repulsion_zbl.model",
-    # ),
-    # (
-    #     "r12",
-    #     "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_1/"
-    #     "319982_2_set1_repulsion_r12/set1_repulsion_r12.model",
-    # ),
-    #finetune 2
-    (
-        "zbl_r12",
-        "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_2/319983_3_set2_repulsion_zbl_r12/set2_repulsion_zbl_r12.model",
-    ),
-    (
-        "zbl",
-        "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_2/319984_1_set2_repulsion_zbl/set2_repulsion_zbl.model",
-    ),
-    (
-        "r12",
-        "/scratch/sophiag/mace_worktrees/job_repulsion_v2_finetune_2/319985_2_set2_repulsion_r12/set2_repulsion_r12.model",
-    ),
+    # ablation v3.1
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.1_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.1_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.1_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.1_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.1_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.1_zbl_r12/repulsion_zbl_r12_raw.model"),
+    # ablation v3.2
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.2_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.2_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.2_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.2_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.2_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.2_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # ablation v3.3
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.3_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.3_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.3_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.3_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.3_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.3_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # ablation v3.4
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.4_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.4_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.4_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.4_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.4_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.4_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # v2_v3_verify (after fixing clamp)
+    # ("r12",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3_verify_r12/repulsion_r12.model"),
+    # ("zbl",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3_verify_zbl/repulsion_zbl.model"),
+    # ("zbl_r12", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3_verify_zbl_r12/repulsion_zbl_r12.model"), 
+    #ablation v3.5
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.5_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.5_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.5_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.5_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.5_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/v2_v3.5_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # gate = none
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/no_gate_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/no_gate_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/no_gate_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/no_gate_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/no_gate_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "//scratch/sophiag/mace_worktrees/job_repulsion_v2/no_gate_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # cosine 0.25/0.55
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate1_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate1_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate1_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate1_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate1_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate1_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # cosine 0.30/0.60
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate2_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate2_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate2_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate2_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate2_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate2_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # cosine 0.40/0.80  
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate3_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate3_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate3_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate3_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate3_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate3_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # cosine 0.50/0.90
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate4_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate4_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate4_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate4_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate4_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate4_zbl_r12/repulsion_zbl_r12_raw.model"),
+    # cosine 0.70/1.90
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate5_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate5_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate5_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate5_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate5_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/gate5_zbl_r12/repulsion_zbl_r12_raw.model"),   
+    # alpha range = 0.95/1.05
+        # no gate
+    #     ("r12 ema no gate",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha095_105_r12/repulsion_r12_ema.model"),
+    #     ("zbl ema no gate",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha095_105_zbl/repulsion_zbl_ema.model"),
+    #     ("zbl_r12 ema no gate", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha095_105_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    #     ("r12 raw no gate",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha095_105_r12/repulsion_r12_raw.model"),
+    #     ("zbl raw no gate",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha095_105_zbl/repulsion_zbl_raw.model"),
+    #     ("zbl_r12 raw no gate", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha095_105_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    #     # cosine 0.6/1.2
+    #     ("r12 ema cosine 0.6/1.2",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha095_105_r12/repulsion_r12_ema.model"),
+    #     ("zbl ema cosine 0.6/1.2",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha095_105_zbl/repulsion_zbl_ema.model"),
+    #     ("zbl_r12 ema cosine 0.6/1.2", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha095_105_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    #     ("r12 raw cosine 0.6/1.2",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha095_105_r12/repulsion_r12_raw.model"),
+    #     ("zbl raw cosine 0.6/1.2",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha095_105_zbl/repulsion_zbl_raw.model"),
+    #     ("zbl_r12 raw cosine 0.6/1.2", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha095_105_zbl_r12/repulsion_zbl_r12_raw.model"),
+
+    # # alpha range = 0.85/1.15
+    #     # no gate
+    #     ("r12 ema no gate",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha085_115_r12/repulsion_r12_ema.model"),
+    #     ("zbl ema no gate",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha085_115_zbl/repulsion_zbl_ema.model"),
+    #     ("zbl_r12 ema no gate", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha085_115_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    #     ("r12 raw no gate",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha085_115_r12/repulsion_r12_raw.model"),
+    #     ("zbl raw no gate",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha085_115_zbl/repulsion_zbl_raw.model"),
+    #     ("zbl_r12 raw no gate", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_alpha085_115_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    #     # cosine 0.6/1.2
+    #     ("r12 ema cosine 0.6/1.2",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha085_115_r12/repulsion_r12_ema.model"),
+    #     ("zbl ema cosine 0.6/1.2",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha085_115_zbl/repulsion_zbl_ema.model"),
+    #     ("zbl_r12 ema cosine 0.6/1.2", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha085_115_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    #     ("r12 raw cosine 0.6/1.2",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha085_115_r12/repulsion_r12_raw.model"),
+    #     ("zbl raw cosine 0.6/1.2",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha085_115_zbl/repulsion_zbl_raw.model"),
+    #     ("zbl_r12 raw cosine 0.6/1.2", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cos06_12_alpha085_115_zbl_r12/repulsion_zbl_r12_raw.model"),   
+    # cosine + lr = 0.002
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # none + lr = 0.002
+    # ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_lr002_r12/repulsion_r12_ema.model"),
+    # ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_lr002_zbl/repulsion_zbl_ema.model"),
+    # ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_lr002_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    # ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_lr002_r12/repulsion_r12_raw.model"),
+    # ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_lr002_zbl/repulsion_zbl_raw.model"),
+    # ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/none_lr002_zbl_r12/repulsion_zbl_r12_raw.model"), 
+    # cosine alpha 0.9/1.1 lr = 0.002
+    ("r12 ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_085_r12/repulsion_r12_ema.model"),
+    ("zbl ema",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_085_zbl/repulsion_zbl_ema.model"),
+    ("zbl_r12 ema", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_085_zbl_r12/repulsion_zbl_r12_ema.model"), 
+    ("r12 raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_085_r12/repulsion_r12_raw.model"),
+    ("zbl raw",     "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_085_zbl/repulsion_zbl_raw.model"),
+    ("zbl_r12 raw", "/scratch/sophiag/mace_worktrees/job_repulsion_v2/cosine_lr002_085_zbl_r12/repulsion_zbl_r12_raw.model"), 
 ]
 
 # -----------------------------

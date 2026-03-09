@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=mace_repulsion_modes
+#SBATCH --job-name=mace_repulsion_cosine_gate
 #SBATCH --output=outslurm/%x_%A_%a.out
 #SBATCH --error=outslurm/%x_%A_%a.err
 #SBATCH --time=2:00:00
@@ -38,7 +38,7 @@ R_MAX=4.0
 RADIAL_MLP="[32,32]"
 PATIENCE=120
 SEED=0
-LR=0.001
+LR=0.002
 SCHEDULER_PATIENCE=10
 LR_FACTOR=0.5
 ZBL_SCALE=0.1
@@ -85,12 +85,11 @@ fi
 NAME=""
 PAIR_FLAGS=""
 PAIR_REPULSION_FLAGS=""
-PAIR_EMB_FLAGS="--pair_repulsion_embedding --pair_repulsion_symmetric_pair_feat True --pair_repulsion_gate cosine --pair_repulsion_r_on 0.60 --pair_repulsion_r_cut 1.20 --pair_repulsion_alpha_reg 1e-3 --pair_repulsion_alpha_min 0.1 --pair_repulsion_alpha_max 10.0"
 # Tuned embedding-conditioned repulsion:
-# - Disable gate (avoid mid-range suppression)
+# - Cosine gate with 0.25/0.55 on/off
 # - Narrow alpha clamp around 1.0
 # - Reduce alpha MLP capacity + stronger regularization
-PAIR_EMB_TUNED="--pair_repulsion_embedding --pair_repulsion_symmetric_pair_feat True --pair_repulsion_gate none --pair_repulsion_alpha_hidden_dim 16 --pair_repulsion_alpha_reg 1e-2 --pair_repulsion_alpha_min 0.8 --pair_repulsion_alpha_max 1.2"
+PAIR_EMB_TUNED="--pair_repulsion_embedding --pair_repulsion_symmetric_pair_feat True --pair_repulsion_gate cosine --pair_repulsion_r_on 0.60 --pair_repulsion_r_cut 1.20 --pair_repulsion_alpha_hidden_dim 16 --pair_repulsion_alpha_reg 1e-2 --pair_repulsion_alpha_min 0.9 --pair_repulsion_alpha_max 1.1"
 
 case "$TASK" in
   0)

@@ -911,6 +911,15 @@ def run(args) -> None:
         rank=rank,
     )
 
+    raw_state_dict = None
+    if args.ema:
+        try:
+            raw_state_dict = deepcopy(model.state_dict())
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.warning(
+                "Failed to snapshot raw weights for EMA comparison (%s).", exc
+            )
+
     logging.info("")
     logging.info("===========RESULTS===========")
 
@@ -1123,6 +1132,102 @@ def run(args) -> None:
                 plotter.plot(epoch, model_to_evaluate, rank)
             except Exception as e:  # pylint: disable=W0718
                 logging.debug(f"Plotting failed: {e}")
+
+        if args.ema and raw_state_dict is not None:
+            logging.info("Computing metrics for RAW weights (final epoch)")
+            model.load_state_dict(raw_state_dict, strict=True)
+            raw_model_to_evaluate = model if not args.distributed else distributed_model
+            table_train_valid_raw = create_error_table(
+                table_type=args.error_table,
+                all_data_loaders=train_valid_data_loader,
+                model=raw_model_to_evaluate,
+                loss_fn=loss_fn,
+                output_args=output_args,
+                log_wandb=args.wandb,
+                device=device,
+                distributed=args.distributed,
+                skip_heads=skip_heads,
+            )
+            logging.info("Error-table on TRAIN and VALID (RAW):\n" + str(table_train_valid_raw))
+            if test_data_loader:
+                table_test_raw = create_error_table(
+                    table_type=args.error_table,
+                    all_data_loaders=test_data_loader,
+                    model=raw_model_to_evaluate,
+                    loss_fn=loss_fn,
+                    output_args=output_args,
+                    log_wandb=args.wandb,
+                    device=device,
+                    distributed=args.distributed,
+                )
+                logging.info("Error-table on TEST (RAW):\n" + str(table_test_raw))
+
+            if ema is not None:
+                logging.info("Computing metrics for EMA weights (final epoch)")
+                with ema.average_parameters():
+                    table_train_valid_ema = create_error_table(
+                        table_type=args.error_table,
+                        all_data_loaders=train_valid_data_loader,
+                        model=raw_model_to_evaluate,
+                        loss_fn=loss_fn,
+                        output_args=output_args,
+                        log_wandb=args.wandb,
+                        device=device,
+                        distributed=args.distributed,
+                        skip_heads=skip_heads,
+                    )
+                    logging.info(
+                        "Error-table on TRAIN and VALID (EMA):\n"
+                        + str(table_train_valid_ema)
+                    )
+                    if test_data_loader:
+                        table_test_ema = create_error_table(
+                            table_type=args.error_table,
+                            all_data_loaders=test_data_loader,
+                            model=raw_model_to_evaluate,
+                            loss_fn=loss_fn,
+                            output_args=output_args,
+                            log_wandb=args.wandb,
+                            device=device,
+                            distributed=args.distributed,
+                        )
+                        logging.info(
+                            "Error-table on TEST (EMA):\n" + str(table_test_ema)
+                        )
+
+            if rank == 0:
+                def _prepare_model_for_save(source_model):
+                    try:
+                        model_to_save = deepcopy(source_model)
+                    except Exception as exc:  # pylint: disable=broad-except
+                        logging.warning(
+                            "Deepcopy failed while saving model (%s). Rebuilding from state_dict.",
+                            exc,
+                        )
+                        target_device = "cpu" if args.save_cpu else device
+                        model_to_save = extract_model(source_model, map_location=target_device)
+                    if args.enable_cueq and not args.only_cueq:
+                        logging.info("RUNING CUEQ TO E3NN")
+                        model_to_save = run_cueq_to_e3nn(model_to_save, device=device)
+                    if args.enable_oeq:
+                        logging.info("RUNING OEQ TO E3NN")
+                        model_to_save = run_oeq_to_e3nn(model_to_save, device=device)
+                    if args.save_cpu:
+                        model_to_save = model_to_save.to("cpu")
+                    return model_to_save
+
+                os.makedirs(args.model_dir, exist_ok=True)
+                raw_model_path = Path(args.model_dir) / (args.name + "_raw.model")
+                logging.info(f"Saving RAW model to {raw_model_path}")
+                raw_model_to_save = _prepare_model_for_save(model)
+                save_model(raw_model_to_save, raw_model_path, config_model=raw_model_to_save)
+
+                if ema is not None:
+                    ema_model_path = Path(args.model_dir) / (args.name + "_ema.model")
+                    logging.info(f"Saving EMA model to {ema_model_path}")
+                    with ema.average_parameters():
+                        ema_model_to_save = _prepare_model_for_save(model)
+                    save_model(ema_model_to_save, ema_model_path, config_model=ema_model_to_save)
 
         if args.distributed:
             torch.distributed.barrier()
