@@ -18,6 +18,9 @@ build/
 .vscode/
 *.txt
 *.log
+*.err
+*.out
+outslurm
 
 # Distribution
 dist/
