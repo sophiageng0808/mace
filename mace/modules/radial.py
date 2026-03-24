@@ -5,16 +5,16 @@
 ###########################################################################################
 
 import logging
+from typing import Optional
 
 import ase
 import numpy as np
 import torch
 from e3nn.util.jit import compile_mode
-from typing import Optional
 
 from mace.tools.scatter import scatter_sum
 
-KE = 14.3996454784255
+KE = 14.3996454784255  # k_e in eV·Å; ZBL term uses k_e * Z_i * Z_j * φ(r/a) / r
 
 
 @compile_mode("script")
@@ -213,7 +213,7 @@ class ZBLBasis(torch.nn.Module):
             + self.c[2] * torch.exp(-0.4028 * r_over_a)
             + self.c[3] * torch.exp(-0.2016 * r_over_a)
         )
-        v_edges = (14.3996 * Z_u * Z_v) / x * phi
+        v_edges = (KE * Z_u * Z_v) / x * phi
         r_max = self.covalent_radii[Z_u] + self.covalent_radii[Z_v]
         envelope = PolynomialCutoff.calculate_envelope(x, r_max, self.p)
         v_edges = 0.5 * v_edges * envelope
@@ -230,6 +230,7 @@ def _node_atomic_numbers_from_onehot(
     dtype: torch.dtype,
     device: torch.device,
 ) -> torch.Tensor:
+    """Atomic number Z per node from one-hot species and the model's element table."""
     return (
         node_attrs.to(dtype=dtype, device=device)
         * atomic_numbers.to(dtype=dtype, device=device)
@@ -242,6 +243,7 @@ def _poly_cutoff(
     p: int,
     apply_cutoff: bool,
 ) -> torch.Tensor:
+    """Polynomial outer envelope (1 − r/r_max)^p used by ZBL and r^-12 at the neighbor cutoff."""
     if not apply_cutoff:
         return torch.ones_like(r)
     x = torch.clamp(r / r_max, 0.0, 1.0)
@@ -254,6 +256,11 @@ def _split_edge_energy_to_nodes(
     n_nodes: int,
     assume_directed_double: bool = True,
 ) -> torch.Tensor:
+    """Scatter half of each edge energy to each endpoint so the bond is counted once per atom.
+
+    If the graph lists both (i→j) and (j→i), ``assume_directed_double`` scales by 1/2 first
+    so the physical pair energy is not doubled.
+    """
     src = edge_index[0]
     dst = edge_index[1]
 
@@ -269,10 +276,7 @@ def _split_edge_energy_to_nodes(
 
 @compile_mode("script")
 class ZBLRepulsion(torch.nn.Module):
-    """
-    ZBL repulsion computed on edges:
-      V_ZBL(r) = KE * Zi*Zj / r * phi(r/a)
-    """
+    """ZBL nuclear repulsion on edges (k_e Z_i Z_j φ(r/a)/r) with (1−r/r_max)^p cutoff."""
 
     def __init__(
         self,
@@ -317,17 +321,44 @@ class ZBLRepulsion(torch.nn.Module):
         atomic_numbers: torch.Tensor,
         r_max: torch.Tensor,
     ) -> torch.Tensor:
+        V = self.edge_energy(
+            lengths=lengths,
+            node_attrs=node_attrs,
+            edge_index=edge_index,
+            atomic_numbers=atomic_numbers,
+            r_max=r_max,
+        )
+        n_nodes = node_attrs.shape[0]
+        return _split_edge_energy_to_nodes(
+            V_edge=V,
+            edge_index=edge_index,
+            n_nodes=n_nodes,
+            assume_directed_double=self.assume_directed_double,
+        )
+
+    def edge_energy(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
         src = edge_index[0]
         dst = edge_index[1]
-
-        r = torch.clamp(lengths, min=self.r_min) # TODO@Sophia: suss
-        dtype = r.dtype
-        device = r.device
+        dtype = lengths.dtype
+        device = lengths.device
+        # Clamp edge length below r_min so 1/r and r^-12 stay bounded when neighbors get very close.
+        r = torch.maximum(
+            lengths,
+            torch.tensor(self.r_min, dtype=dtype, device=device),
+        )
 
         Z_node = _node_atomic_numbers_from_onehot(node_attrs, atomic_numbers, dtype, device)
         Zi = Z_node[src]
         Zj = Z_node[dst]
 
+        # Standard ZBL: screening length a(Zi,Zj), φ(r/a) sum of exponentials, Coulomb prefactor k_e Zi Zj / r.
         a = self._screening_length(Zi, Zj)
         x = r / a
         phi = self._phi(x)
@@ -338,21 +369,12 @@ class ZBLRepulsion(torch.nn.Module):
         V = V * scale
         cutoff = _poly_cutoff(r, r_max.to(dtype=dtype, device=device), self.p, self.apply_cutoff)
         V = V * cutoff
-
-        n_nodes = node_attrs.shape[0]
-        return _split_edge_energy_to_nodes(
-            V_edge=V,
-            edge_index=edge_index,
-            n_nodes=n_nodes,
-            assume_directed_double=self.assume_directed_double,
-        )
+        return V
 
 
 @compile_mode("script")
 class R12Repulsion(torch.nn.Module):
-    """
-    Pure r^-12 repulsion on edges: V_12(r) = c12 / r^12.
-    """
+    """r^-12 pair wall: c12/r^12 with outer (1−r/r_max)^p and optional inner cutoff."""
 
     def __init__(
         self,
@@ -387,24 +409,13 @@ class R12Repulsion(torch.nn.Module):
         atomic_numbers: torch.Tensor,
         r_max: torch.Tensor,
     ) -> torch.Tensor:
-        r = torch.clamp(lengths, min=self.r_min)
-        dtype = r.dtype
-        device = r.device
-
-        c12 = torch.tensor(self.c12, dtype=dtype, device=device)
-        V = c12 / (r**12)
-
-        cutoff = _poly_cutoff(r, r_max.to(dtype=dtype, device=device), self.p, self.apply_cutoff)
-        V = V * cutoff
-
-        r12_cutoff = self.r12_cutoff.to(dtype=dtype, device=device)
-        width = self.r12_switch_width.to(dtype=dtype, device=device)
-        hard = (r <= r12_cutoff).to(dtype)
-        t = torch.clamp((r12_cutoff - r) / torch.clamp(width, min=1e-12), 0.0, 1.0)
-        smooth = t * t * (3.0 - 2.0 * t)
-        cutoff_extra = torch.where(width > 0, smooth, hard)
-        V = V * torch.where(r12_cutoff > 0, cutoff_extra, torch.ones_like(r))
-
+        V = self.edge_energy(
+            lengths=lengths,
+            node_attrs=node_attrs,
+            edge_index=edge_index,
+            atomic_numbers=atomic_numbers,
+            r_max=r_max,
+        )
         n_nodes = node_attrs.shape[0]
         return _split_edge_energy_to_nodes(
             V_edge=V,
@@ -413,37 +424,73 @@ class R12Repulsion(torch.nn.Module):
             assume_directed_double=self.assume_directed_double,
         )
 
+    def edge_energy(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
+        dtype = lengths.dtype
+        device = lengths.device
+        # Same floor as ZBL so short edges do not explode r^-12.
+        r = torch.maximum(
+            lengths,
+            torch.tensor(self.r_min, dtype=dtype, device=device),
+        )
+
+        c12 = torch.tensor(self.c12, dtype=dtype, device=device)
+        V = c12 / (r**12)
+
+        cutoff = _poly_cutoff(r, r_max.to(dtype=dtype, device=device), self.p, self.apply_cutoff)
+        V = V * cutoff
+
+        # Inner gate: damp repulsion below r12_cutoff (disabled when buffer ≤ 0). Smoothstep if width > 0.
+        r12_cutoff = self.r12_cutoff.to(dtype=dtype, device=device)
+        width = self.r12_switch_width.to(dtype=dtype, device=device)
+        hard = (r <= r12_cutoff).to(dtype)
+        t = torch.clamp((r12_cutoff - r) / torch.clamp(width, min=1e-12), 0.0, 1.0)
+        smooth = t * t * (3.0 - 2.0 * t)
+        cutoff_extra = torch.where(width > 0, smooth, hard)
+        V = V * torch.where(r12_cutoff > 0, cutoff_extra, torch.ones_like(r))
+        return V
+
 
 @compile_mode("script")
 class PairRepulsionSwitch(torch.nn.Module):
     """
-    TorchScript-safe router:
-      - mode 0: sum of selected kinds (from kinds list)
-      - mode 1: zbl only
-      - mode 2: r12 only
-      - mode 3: both (zbl + r12)
+    Single pair-repulsion term on edges: either ZBL or r^-12.
+
+    ``kinds`` must be exactly one of ``["zbl"]`` or ``["r12"]``. There is no combined
+    zbl+r12 term; for a run without empirical repulsion, set ``pair_repulsion=False`` on
+    the model (training "baseline") instead of using this module.
     """
 
     def __init__(
         self,
         kinds: Optional[list],
-        zbl: ZBLRepulsion,
-        r12: R12Repulsion,
-        mode: int = 0,
+        zbl: Optional[ZBLRepulsion],
+        r12: Optional[R12Repulsion],
     ):
         super().__init__()
         if kinds is None:
             kinds = ["zbl"]
         self.kinds = [k for k in kinds if k]
-        self.use_zbl = "zbl" in self.kinds
-        self.use_r12 = "r12" in self.kinds
-        self.mode = int(mode)
-        self.zbl = zbl
-        self.r12 = r12
-        if self.mode < 0 or self.mode > 3:
+        if len(self.kinds) != 1 or self.kinds[0] not in ("zbl", "r12"):
             raise ValueError(
-                "PairRepulsionSwitch mode must be 0(sum),1(zbl),2(r12),3(both)."
+                "PairRepulsionSwitch requires pair_repulsion_kinds to be exactly "
+                "['zbl'] or ['r12'], not combined terms."
             )
+        # Only the active term is stored as a child module (see build_pair_repulsion).
+        if self.kinds[0] == "zbl":
+            if zbl is None or r12 is not None:
+                raise ValueError("PairRepulsionSwitch(zbl): expected zbl module only.")
+            self.zbl = zbl
+        else:
+            if r12 is None or zbl is not None:
+                raise ValueError("PairRepulsionSwitch(r12): expected r12 module only.")
+            self.r12 = r12
 
     def forward(
         self,
@@ -453,24 +500,36 @@ class PairRepulsionSwitch(torch.nn.Module):
         atomic_numbers: torch.Tensor,
         r_max: torch.Tensor,
     ) -> torch.Tensor:
+        V_edge = self.edge_energy(
+            lengths=lengths,
+            node_attrs=node_attrs,
+            edge_index=edge_index,
+            atomic_numbers=atomic_numbers,
+            r_max=r_max,
+        )
         n_nodes = node_attrs.shape[0]
-        out = torch.zeros((n_nodes,), dtype=lengths.dtype, device=lengths.device)
+        # Neighbor lists are bidirectional; keep 1/2 factor in sync with ZBLRepulsion/R12Repulsion.
+        return _split_edge_energy_to_nodes(
+            V_edge=V_edge,
+            edge_index=edge_index,
+            n_nodes=n_nodes,
+            assume_directed_double=True,
+        )
 
-        if self.mode == 0:
-            if self.use_zbl:
-                out = out + self.zbl(
-                    lengths, node_attrs, edge_index, atomic_numbers, r_max
-                )
-            if self.use_r12:
-                out = out + self.r12(
-                    lengths, node_attrs, edge_index, atomic_numbers, r_max
-                )
-            return out
-        if self.mode == 1:
-            return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max)
-        if self.mode == 2:
-            return self.r12(lengths, node_attrs, edge_index, atomic_numbers, r_max)
-        return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max) + self.r12(
+    def edge_energy(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+        r_max: torch.Tensor,
+    ) -> torch.Tensor:
+        # Delegate to the single child module built in build_pair_repulsion.
+        if self.kinds[0] == "zbl":
+            return self.zbl.edge_energy(
+                lengths, node_attrs, edge_index, atomic_numbers, r_max
+            )
+        return self.r12.edge_energy(
             lengths, node_attrs, edge_index, atomic_numbers, r_max
         )
 
@@ -610,20 +669,6 @@ class SoftTransform(torch.nn.Module):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(alpha={self.alpha.item():.4f})"
-
-
-class PairRepulsionSoftTransform(SoftTransform):
-    """Backward-compatible soft distance transform for legacy checkpoints."""
-
-    def forward(
-        self,
-        lengths: torch.Tensor,
-        node_attrs: torch.Tensor,
-        edge_index: torch.Tensor,
-        atomic_numbers: torch.Tensor,
-        **kwargs,
-    ) -> torch.Tensor:
-        return super().forward(lengths, node_attrs, edge_index, atomic_numbers)
 
 
 class RadialMLP(torch.nn.Module):

@@ -45,10 +45,10 @@ from .models import (
 from .radial import (
     BesselBasis,
     GaussianBasis,
-    PolynomialCutoff,
-    ZBLBasis,
     PairRepulsionSwitch,
+    PolynomialCutoff,
     R12Repulsion,
+    ZBLBasis,
     ZBLRepulsion,
 )
 from .symmetric_contraction import SymmetricContraction

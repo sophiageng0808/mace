@@ -11,7 +11,6 @@ from e3nn.util import jit
 from mace.calculators import LAMMPS_MACE
 from mace.calculators.lammps_mliap_mace import LAMMPS_MLIAP_MACE
 from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
-from mace.tools.scripts_utils import load_model
 
 
 def parse_args():
@@ -77,7 +76,7 @@ def select_head(model):
 def main():
     args = parse_args()
     model_path = args.model_path  # takes model name as command-line input
-    model = load_model(
+    model = torch.load(
         model_path,
         map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     )

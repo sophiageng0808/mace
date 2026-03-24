@@ -10,53 +10,16 @@ import pandas as pd
 import torch
 
 import wandb
-import matplotlib.pyplot as plt
-from ase.io import read as ase_read
-
-import sys
-import mace.modules.radial as _mace_radial
-
-
-class _CompatPairRepulsionSwitch(torch.nn.Module):
-    """
-    Backward-compatible router: mode 0=off, 1=zbl, 2=r12, 3=both.
-    """
-
-    def __init__(self, zbl, r12, mode: int = 0):
-        super().__init__()
-        self.mode = int(mode)
-        self.zbl = zbl
-        self.r12 = r12
-        if self.mode < 0 or self.mode > 3:
-            raise ValueError("PairRepulsionSwitch mode must be 0(off),1(zbl),2(r12),3(both).")
-
-    def forward(self, lengths, node_attrs, edge_index, atomic_numbers, r_max):
-        n_nodes = node_attrs.shape[0]
-        out = torch.zeros((n_nodes,), dtype=lengths.dtype, device=lengths.device)
-        if self.mode == 0:
-            return out
-        if self.mode == 1:
-            return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max)
-        if self.mode == 2:
-            return self.r12(lengths, node_attrs, edge_index, atomic_numbers, r_max)
-        return self.zbl(lengths, node_attrs, edge_index, atomic_numbers, r_max) + self.r12(
-            lengths, node_attrs, edge_index, atomic_numbers, r_max
-        )
-try:
-    import mace.modules.repulsion as _mace_repulsion
-    _mace_repulsion.ZBLBasis = _mace_radial.ZBLBasis
-    _mace_repulsion.PairRepulsionSwitch = _CompatPairRepulsionSwitch
-except Exception:
-    _mace_radial.PairRepulsionSwitch = _CompatPairRepulsionSwitch
-    sys.modules.setdefault("mace.modules.repulsion", _mace_radial)
+import mace.modules.repulsion  # noqa: F401
 
 # -----------------------------
 # Config (dataset + scan)
 # -----------------------------
 USER = os.environ.get("USER", "unknown")
 SCRATCH_MACE = Path(f"/scratch/{USER}/mace")
-DATA_EXTXYZ = str(SCRATCH_MACE / "data" / "overfit100_E0sub.extxyz")
-N_STRUCTURES_DEFAULT = 100
+DATA_H5 = str(SCRATCH_MACE / "data" / "train4M_h5" / "test")
+N_STRUCTURES_DEFAULT = None  # None = full dataset
+SEED_DEFAULT = 0
 
 STEPS_DEFAULT = 50
 START_DISTANCE_DEFAULT = 0.7
@@ -64,16 +27,16 @@ END_DISTANCE_DEFAULT = 0.2
 DEVICE_DEFAULT = "cuda" if torch.cuda.is_available() else "cpu"
 
 REL_DROP_TOL = 0.01  # monotonicity tolerance as fraction of curve span
-
+CLAMP_THRESHOLD = 9.9e5
 # -----------------------------
 # Repulsion models (ABSOLUTE PATHS)
 # -----------------------------
 JOBS_ROOT = Path(f"/scratch/{USER}/mace_worktrees/jobs_repulsion")
 REPULSION_MODELS = [
-    # ("baseline_norepulsion", str(JOBS_ROOT / "baseline" / "baseline_norepulsion.model")),
-    ("r12",     "/scratch/sophiag/mace_worktrees/jobs_repulsion/309421_2_repulsion_r12/repulsion_r12.model"),
-    ("zbl",     "/scratch/sophiag/mace_worktrees/jobs_repulsion/309419_1_repulsion_zbl/repulsion_zbl.model"),
-    ("zbl_r12", "/scratch/sophiag/mace_worktrees/jobs_repulsion/309413_3_repulsion_zbl_r12/repulsion_zbl_r12.model"),
+    ("r12 scale 1.0", str(JOBS_ROOT / "train4M_lr0.01_ep200_samp20000_val20000_r121.0/repulsion_r12.model")),
+    ("r12 scale 0.1", str(JOBS_ROOT / "train4M_lr0.01_ep200_samp20000_val20000_r120.1/repulsion_r12.model")),
+    ("zbl scale 1.0", str(JOBS_ROOT / "train4M_lr0.01_ep200_samp20000_val20000_zbl1.0/checkpoints/repulsion_zbl_run-0_epoch-6.model")),
+    ("zbl scale 0.1", str(JOBS_ROOT / "train4M_lr0.01_ep200_samp20000_val20000_zbl0.1/checkpoints/repulsion_zbl_run-0_epoch-24.model")),
 ]
 
 # -----------------------------
@@ -108,6 +71,53 @@ SUMMARY_HEADER = [
 # -----------------------------
 # Helpers
 # -----------------------------
+def _unpack_h5_value(value):
+    value = value.decode("utf-8") if isinstance(value, bytes) else value
+    return None if str(value) == "None" else value
+
+
+def load_frames_from_h5(h5_dir: str) -> list:
+    """Load structures from MACE sharded HDF5 directory (e.g. train4M_h5/test)."""
+    import h5py
+    from ase import Atoms
+
+    h5_path = Path(h5_dir)
+    if not h5_path.is_dir():
+        raise FileNotFoundError(f"H5 directory not found: {h5_dir}")
+    h5_files = sorted(h5_path.glob("*.h5")) + sorted(h5_path.glob("*.hdf5"))
+    if not h5_files:
+        raise FileNotFoundError(f"No .h5/.hdf5 files in {h5_dir}")
+
+    frames = []
+    for fpath in h5_files:
+        with h5py.File(fpath, "r") as f:
+            batch_keys = sorted(k for k in f.keys() if k.startswith("config_batch_"))
+            for batch_key in batch_keys:
+                grp = f[batch_key]
+                config_keys = sorted(grp.keys(), key=lambda x: int(x.split("_")[-1]))
+                for config_key in config_keys:
+                    sub = grp[config_key]
+                    numbers = np.asarray(sub["atomic_numbers"][()])
+                    positions = np.asarray(sub["positions"][()])
+                    cell = _unpack_h5_value(sub["cell"][()])
+                    pbc = _unpack_h5_value(sub["pbc"][()])
+                    atoms = Atoms(numbers=numbers, positions=positions, cell=cell, pbc=pbc)
+                    for k, v in sub["properties"].items():
+                        val = _unpack_h5_value(v[()])
+                        if val is not None:
+                            arr = np.asarray(val)
+                            if arr.ndim == 0 or (arr.ndim == 1 and arr.size == 1):
+                                atoms.info[k] = float(arr) if arr.size else val
+                            elif arr.ndim == 2:
+                                atoms.arrays[k] = arr
+                    if "total_charge" in atoms.info and "charge" not in atoms.info:
+                        atoms.info["charge"] = atoms.info["total_charge"]
+                    if "total_spin" in atoms.info and "spin" not in atoms.info:
+                        atoms.info["spin"] = atoms.info["total_spin"]
+                    frames.append(atoms)
+    return frames
+
+
 def ensure_csv(path: Path, header):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -143,6 +153,27 @@ def first_failure_index(values, rel_drop_tol=REL_DROP_TOL):
         return None
     return int(bad[0] + 1)
 
+
+def _violations_involve_only_clamp(values, rel_drop_tol=REL_DROP_TOL, clamp_threshold=CLAMP_THRESHOLD):
+    """True if all monotonicity violations in values involve at least one clamped point (|v|>=clamp_threshold)."""
+    v = np.asarray(values, float)
+    if v.size < 2:
+        return True
+    vmin, vmax = float(np.min(v)), float(np.max(v))
+    span = vmax - vmin
+    if span <= 0:
+        return True
+    dv = np.diff(v)
+    bad = np.where(dv < -rel_drop_tol * span)[0]
+    if bad.size == 0:
+        return True
+    for i in bad:
+        a, b = float(v[i]), float(v[i + 1])
+        # Violation is clamp-induced only if at least one value is at clamp boundary
+        if abs(a) < clamp_threshold and abs(b) < clamp_threshold:
+            return False  # real monotonicity failure, not clamp artifact
+    return True
+
 def preserve_info(atoms):
     atoms.info = dict(getattr(atoms, "info", {}) or {})
 
@@ -177,16 +208,10 @@ def ensure_pair_repulsion_buffers(calc):
                 ase.data.covalent_radii,
                 dtype=torch.get_default_dtype(),
             )
-            try:
-                pr.register_buffer("covalent_radii", covalent)
-            except Exception:
-                pr.covalent_radii = covalent
+            pr.register_buffer("covalent_radii", covalent)
         if not hasattr(pr, "alpha"):
             alpha = torch.tensor(4.0, dtype=torch.get_default_dtype())
-            try:
-                pr.register_buffer("alpha", alpha)
-            except Exception:
-                pr.alpha = alpha
+            pr.register_buffer("alpha", alpha)
 
 def get_r12_min_distance(calc):
     for model in getattr(calc, "models", []):
@@ -197,10 +222,7 @@ def get_r12_min_distance(calc):
         if r12 is None:
             continue
         if hasattr(r12, "r_min"):
-            try:
-                return float(r12.r_min)
-            except Exception:
-                pass
+            return float(r12.r_min)
     return None
 
 def get_zbl_min_distance(calc):
@@ -212,21 +234,8 @@ def get_zbl_min_distance(calc):
         if zbl is None:
             continue
         if hasattr(zbl, "r_min"):
-            try:
-                return float(zbl.r_min)
-            except Exception:
-                pass
+            return float(zbl.r_min)
     return None
-
-def eval_signature(calc, atoms):
-    test = atoms.copy()
-    preserve_info(test)
-    test.calc = calc
-    if hasattr(calc, "results") and isinstance(calc.results, dict):
-        calc.results.clear()
-    E = float(test.get_potential_energy())
-    F = np.asarray(test.get_forces(), float)
-    return E, float(np.linalg.norm(F)), float(np.max(np.abs(F)))
 
 def run_scan(
     atoms, i, j, calc,
@@ -236,7 +245,6 @@ def run_scan(
     dist: np.ndarray,
     all_csv: Path,
     failed_csv: Path,
-    use_wandb: bool,
 ):
     vec = atoms.positions[j] - atoms.positions[i]
     u = vec / (np.linalg.norm(vec) + 1e-12)
@@ -319,6 +327,16 @@ def run_scan(
     f_mono = monotone_nondecreasing(raw_f)
     f_abs_mono = monotone_nondecreasing(raw_f_abs)
     failed = (not e_mono) or (not f_mono)
+    # Don't fail when clamp is hit ONLY if the monotonicity breaks are clamp artifacts:
+    # every violation must involve at least one clamped value (|v|>=9.9e5).
+    # Real monotonicity failures (e.g. non-monotone in normal range) still count as failed.
+    min_e, max_e = float(np.min(raw_e)), float(np.max(raw_e))
+    hit_clamp = (min_e <= -CLAMP_THRESHOLD) or (max_e >= CLAMP_THRESHOLD)
+    if hit_clamp and failed:
+        e_clamp_only = _violations_involve_only_clamp(raw_e)
+        f_clamp_only = _violations_involve_only_clamp(raw_f)
+        if e_clamp_only and f_clamp_only:
+            failed = False
     has_nonfinite = (n_nan_energy + n_inf_energy + n_nan_force + n_inf_force) > 0
     has_nan_only = (n_nan_energy + n_nan_force) > 0 and (n_inf_energy + n_inf_force) == 0
 
@@ -347,33 +365,6 @@ def run_scan(
     if failed:
         write_csv(failed_csv, row)
 
-    # Plot
-    if use_wandb:
-        wandb.log({
-            f"{group_name}/{model_name}/failed_curve": int(failed),
-            f"{group_name}/{model_name}/nan_energy_count": int(n_nan_energy),
-            f"{group_name}/{model_name}/inf_energy_count": int(n_inf_energy),
-            f"{group_name}/{model_name}/nan_force_count": int(n_nan_force),
-            f"{group_name}/{model_name}/inf_force_count": int(n_inf_force),
-            f"{group_name}/{model_name}/nonfinite_curve": int(has_nonfinite),
-            f"{group_name}/{model_name}/nan_only_curve": int(has_nan_only),
-        })
-        if model_name == "r12" and failed:
-            fig, axes = plt.subplots(2, 1, figsize=(6, 6), sharex=True)
-            axes[0].plot(dist, raw_e, marker="o", linewidth=1)
-            axes[0].set_ylabel("Energy")
-            axes[1].plot(dist, raw_f, marker="o", linewidth=1)
-            axes[1].set_ylabel("-Fi · u")
-            axes[1].set_xlabel("Distance (Ang)")
-            if np.isfinite(d_fail):
-                for ax in axes:
-                    ax.axvline(d_fail, color="red", linestyle="--", linewidth=1)
-            fig.tight_layout()
-            wandb.log({
-                f"{group_name}/{model_name}/failed_curve_plot": wandb.Image(fig),
-            })
-            plt.close(fig)
-
     return dict(
         failed=bool(failed),
         energy_failed=bool(not e_mono),
@@ -395,13 +386,21 @@ def run_scan(
 # -----------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n_structures", type=int, default=N_STRUCTURES_DEFAULT)
+    parser.add_argument(
+        "--n_structures",
+        type=int,
+        default=N_STRUCTURES_DEFAULT,
+        help="Max structures to scan. None = full dataset (use --n_structures 0 or omit to mean all)",
+    )
     parser.add_argument("--steps", type=int, default=STEPS_DEFAULT)
     parser.add_argument("--start_distance", type=float, default=START_DISTANCE_DEFAULT)
     parser.add_argument("--end_distance", type=float, default=END_DISTANCE_DEFAULT)
+    parser.add_argument("--seed", type=int, default=SEED_DEFAULT)
     parser.add_argument("--device", type=str, default=None, help="cuda/cpu. Default: auto")
     parser.add_argument("--run_name", type=str, default=None,
                         help="Optional run folder name. Default: timestamp.")
+    parser.add_argument("--group", type=str, default="repulsion_cosine_gate",
+                        help="Output group name (e.g. repulsion, repulsion_smooth, repulsion_cosine_gate).")
     parser.add_argument("--no_wandb", action="store_true")
     args = parser.parse_args()
 
@@ -411,7 +410,7 @@ if __name__ == "__main__":
     os.chdir(repulsion_root)
 
     run_id = args.run_name or datetime.now().strftime("%Y%m%d_%H%M%S")
-    group_name = "repulsion"
+    group_name = args.group
 
     OUTPUT_ROOT = SCRATCH_MACE / "outputs" / "dissociation_scans_overfit100"
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -426,28 +425,21 @@ if __name__ == "__main__":
         wandb.init(
             project="dmlip-dissociation-scan-overfit100",
             name=f"overfit100_scan_{run_id}",
-            config={
-                "groups": [group_name],
-                "steps": args.steps,
-                "start_distance": args.start_distance,
-                "end_distance": args.end_distance,
-                "device": device,
-                "data_extxyz": DATA_EXTXYZ,
-                "n_structures": args.n_structures,
-                "run_id": run_id,
-            },
+            config={"group": group_name, "run_id": run_id, "device": device},
             settings=wandb.Settings(start_method="thread"),
         )
 
-    if not os.path.exists(DATA_EXTXYZ):
-        raise FileNotFoundError(f"Missing extxyz: {DATA_EXTXYZ}")
+    h5_dir = Path(DATA_H5)
+    if not h5_dir.is_dir():
+        raise FileNotFoundError(f"Missing H5 directory: {DATA_H5}")
 
-    frames = ase_read(DATA_EXTXYZ, ":")
+    frames = load_frames_from_h5(DATA_H5)
     ds_len = len(frames)
-    n_to_run = ds_len if args.n_structures is None else min(int(args.n_structures), ds_len)
-    print(f"[OK] Loaded extxyz {DATA_EXTXYZ} with len={ds_len}; running n={n_to_run}")
+    n_to_run = ds_len if (args.n_structures is None or args.n_structures <= 0) else min(args.n_structures, ds_len)
+    print(f"H5 n={ds_len} scan n={n_to_run}")
 
     dist = np.linspace(args.start_distance, args.end_distance, args.steps)
+    rng = np.random.default_rng(args.seed)
 
     SUMMARY_CSV_PATH = group_dir / "model_summary_metrics.csv"
     ensure_csv(SUMMARY_CSV_PATH, SUMMARY_HEADER)
@@ -459,7 +451,6 @@ if __name__ == "__main__":
         if not mp.exists():
             raise FileNotFoundError(f"[{group_name}] Missing model file: {model_name} -> {model_path}")
         calc_map[model_name] = load_mace_calculator(str(mp), device)
-        print(f"[OK] [{group_name}] Loaded {model_name} from {model_path}")
 
     # Per-model CSV outputs
     per_model_csv = {}
@@ -472,14 +463,6 @@ if __name__ == "__main__":
         ensure_csv(failed_csv, CSV_HEADER)
         per_model_csv[model_name] = (all_csv, failed_csv)
 
-    probe = frames[0].copy()
-    preserve_info(probe)
-    print(f"\n[FINGERPRINT] [{group_name}] energy + ||F|| + max|F| on frame0:")
-    for name, calc in calc_map.items():
-        E, Fn, Fmax = eval_signature(calc, probe)
-        print(f"  {name:22s}  E={E:+.8f}  ||F||={Fn:.6f}  max|F|={Fmax:.6f}")
-
-    print("\n[INFO] Starting scans...\n")
 
     per_model_acc = {
         model_name: {
@@ -504,57 +487,56 @@ if __name__ == "__main__":
     for idx in range(n_to_run):
         at = frames[int(idx)].copy()
         preserve_info(at)
-        mol_label = f"overfit100_{idx}"
+        mol_label = f"train4m_{idx}"
 
         nat = len(at)
         if nat < 2:
             continue
 
-        for i in range(nat):
-            dist_to_all = np.linalg.norm(at.positions - at.positions[i], axis=1)
-            dist_to_all[i] = np.inf
-            j = int(np.argmin(dist_to_all))
+        i = int(rng.integers(0, nat))
+        dist_to_all = np.linalg.norm(at.positions - at.positions[i], axis=1)
+        dist_to_all[i] = np.inf
+        j = int(np.argmin(dist_to_all))
 
-            for model_name, calc in calc_map.items():
-                dist_model = dist
-                if model_name == "r12":
-                    r12_min = get_r12_min_distance(calc)
-                    if r12_min is not None:
-                        min_dist = r12_min + 1e-3
-                        if np.min(dist_model) <= min_dist:
-                            dist_model = np.maximum(dist_model, min_dist)
-                if model_name in ("zbl", "zbl_r12"):
-                    zbl_min = get_zbl_min_distance(calc)
-                    if zbl_min is not None:
-                        min_dist = zbl_min + 1e-3
-                        if np.min(dist_model) <= min_dist:
-                            dist_model = np.maximum(dist_model, min_dist)
-                metrics = run_scan(
-                    at, i, j, calc,
-                    model_name=model_name,
-                    group_name=group_name,
-                    mol_label=mol_label,
-                    dist=dist_model,
-                    all_csv=per_model_csv[model_name][0],
-                    failed_csv=per_model_csv[model_name][1],
-                    use_wandb=use_wandb,
-                )
+        for model_name, calc in calc_map.items():
+            dist_model = dist
+            if "r12" in model_name:
+                r12_min = get_r12_min_distance(calc)
+                if r12_min is not None:
+                    min_dist = r12_min + 1e-3
+                    if np.min(dist_model) <= min_dist:
+                        dist_model = np.maximum(dist_model, min_dist)
+            if "zbl" in model_name:
+                zbl_min = get_zbl_min_distance(calc)
+                if zbl_min is not None:
+                    min_dist = zbl_min + 1e-3
+                    if np.min(dist_model) <= min_dist:
+                        dist_model = np.maximum(dist_model, min_dist)
+            metrics = run_scan(
+                at, i, j, calc,
+                model_name=model_name,
+                group_name=group_name,
+                mol_label=mol_label,
+                dist=dist_model,
+                all_csv=per_model_csv[model_name][0],
+                failed_csv=per_model_csv[model_name][1],
+            )
 
-                acc = per_model_acc[model_name]
-                acc["n"] += 1
-                acc["n_failed"] += int(metrics["failed"])
-                acc["n_energy_failed"] += int(metrics["energy_failed"])
-                acc["n_force_failed"] += int(metrics["force_failed"])
-                acc["n_nonfinite"] += int(metrics["has_nonfinite"])
-                acc["n_nan_only"] += int(metrics["has_nan_only"])
-                acc["max_abs_mis"].append(metrics["max_abs_dEdd_mismatch"])
-                acc["mean_abs_mis"].append(metrics["mean_abs_dEdd_mismatch"])
-                acc["max_rel_mis"].append(metrics["max_rel_dEdd_mismatch"])
-                acc["mean_rel_mis"].append(metrics["mean_rel_dEdd_mismatch"])
-                acc["mean_net_force"].append(metrics["mean_net_force_norm"])
-                acc["mean_net_torque"].append(metrics["mean_net_torque_norm"])
-                acc["mean_cos"].append(metrics["mean_force_cos_angle"])
-                acc["min_cos"].append(metrics["min_force_cos_angle"])
+            acc = per_model_acc[model_name]
+            acc["n"] += 1
+            acc["n_failed"] += int(metrics["failed"])
+            acc["n_energy_failed"] += int(metrics["energy_failed"])
+            acc["n_force_failed"] += int(metrics["force_failed"])
+            acc["n_nonfinite"] += int(metrics["has_nonfinite"])
+            acc["n_nan_only"] += int(metrics["has_nan_only"])
+            acc["max_abs_mis"].append(metrics["max_abs_dEdd_mismatch"])
+            acc["mean_abs_mis"].append(metrics["mean_abs_dEdd_mismatch"])
+            acc["max_rel_mis"].append(metrics["max_rel_dEdd_mismatch"])
+            acc["mean_rel_mis"].append(metrics["mean_rel_dEdd_mismatch"])
+            acc["mean_net_force"].append(metrics["mean_net_force_norm"])
+            acc["mean_net_torque"].append(metrics["mean_net_torque_norm"])
+            acc["mean_cos"].append(metrics["mean_force_cos_angle"])
+            acc["min_cos"].append(metrics["min_force_cos_angle"])
 
     for model_name, acc in per_model_acc.items():
         n = max(acc["n"], 1)
@@ -570,18 +552,6 @@ if __name__ == "__main__":
             float(np.nanmean(acc["mean_cos"])), float(np.nanmean(acc["min_cos"])),
         ]
         write_csv(SUMMARY_CSV_PATH, row)
-        if use_wandb:
-            wandb.log(
-                {
-                    f"{group_name}/{model_name}/fail_rate": float(n_failed / n),
-                    f"{group_name}/{model_name}/nonfinite_rate": float(
-                        acc["n_nonfinite"] / n
-                    ),
-                    f"{group_name}/{model_name}/nan_only_rate": float(
-                        acc["n_nan_only"] / n
-                    ),
-                }
-            )
 
     if use_wandb:
         art = wandb.Artifact(f"scan_outputs_overfit100_{group_name}_{run_id}", type="results")
@@ -591,12 +561,7 @@ if __name__ == "__main__":
         art.add_file(str(SUMMARY_CSV_PATH))
         wandb.run.log_artifact(art)
 
-    print(f"[DONE] Group {group_name} finished.")
-    print(f"  Per-model CSV root: {group_dir}")
-    print(f"  Summary CSV:     {SUMMARY_CSV_PATH}\n")
-
-    print("[DONE] Finished repulsion group.")
-    print("Run outputs root:", OUTPUT_ROOT)
+    print(f"done {group_name} -> {group_dir}  summary {SUMMARY_CSV_PATH}")
 
     if use_wandb:
         wandb.finish()

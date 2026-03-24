@@ -5,7 +5,7 @@ import os
 import torch
 
 from mace.modules.wrapper_ops import OEQConfig
-from mace.tools.scripts_utils import extract_config_mace_model, load_model
+from mace.tools.scripts_utils import extract_config_mace_model
 
 
 def run(
@@ -20,7 +20,7 @@ def run(
     # logging.warning(f"Loading model")
     # check if input_model is a path or a model
     if isinstance(input_model, str):
-        source_model = load_model(input_model, map_location=device)
+        source_model = torch.load(input_model, map_location=device)
     else:
         source_model = input_model
     default_dtype = next(source_model.parameters()).dtype

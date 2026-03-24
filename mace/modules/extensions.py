@@ -4,7 +4,7 @@ import torch
 from e3nn.util.jit import compile_mode
 
 from mace.modules.blocks import LinearReadoutBlock, NonLinearReadoutBlock
-from mace.modules.models import ScaleShiftMACE
+from mace.modules.models import ScaleShiftMACE, _FORWARD_OUTPUT_CLAMP
 from mace.modules.utils import get_atomic_virials_stresses, get_outputs, prepare_graph
 from mace.modules.wrapper_ops import CuEquivarianceConfig
 from mace.tools.scatter import scatter_sum
@@ -119,9 +119,17 @@ class MACELES(ScaleShiftMACE):
         ]
         e0 = scatter_sum(
             src=node_e0, index=data["batch"], dim=0, dim_size=num_graphs
-        ).to(
-            vectors.dtype
-        )  # [n_graphs, num_heads]
+        ).to(vectors.dtype)
+
+        def _match_node_energy_shape(tensor: torch.Tensor) -> torch.Tensor:
+            """Match pair / readout node energy shape to ``node_e0`` (single vs multi-head)."""
+            if node_e0.dim() == 1:
+                if tensor.dim() == 2:
+                    return tensor[num_atoms_arange, node_heads]
+                return tensor
+            if node_e0.dim() == 2 and tensor.dim() == 1:
+                return tensor.unsqueeze(-1).expand(-1, node_e0.shape[1])
+            return tensor
 
         # Embeddings
         node_feats = self.node_embedding(data["node_attrs"])
@@ -130,18 +138,28 @@ class MACELES(ScaleShiftMACE):
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
 
+        # Pair term: same API as ScaleShiftMACE; not included in LES charge readouts.
         if hasattr(self, "pair_repulsion_fn"):
-            pair_node_energy = self.pair_repulsion_fn(
+            pair_node_e_scalar = self.pair_repulsion_fn(
                 lengths=lengths,
                 node_attrs=data["node_attrs"],
                 edge_index=data["edge_index"],
                 atomic_numbers=self.atomic_numbers,
                 r_max=self.r_max,
             )
+            if pair_node_e_scalar.dim() == 2 and pair_node_e_scalar.shape[-1] == 1:
+                pair_node_e_scalar = pair_node_e_scalar.squeeze(-1)
             if is_lammps:
-                pair_node_energy = pair_node_energy[: lammps_natoms[0]]
+                pair_node_e_scalar = pair_node_e_scalar[: lammps_natoms[0]]
+            if node_e0.dim() == 2 and pair_node_e_scalar.dim() == 1:
+                pair_node_energy = pair_node_e_scalar.unsqueeze(-1).expand(
+                    -1, node_e0.shape[1]
+                )
+            else:
+                pair_node_energy = pair_node_e_scalar
         else:
             pair_node_energy = torch.zeros_like(node_e0)
+        pair_node_energy = _match_node_energy_shape(pair_node_energy)
 
         # Embeddings of additional features
         if hasattr(self, "joint_embedding"):
@@ -165,7 +183,7 @@ class MACELES(ScaleShiftMACE):
                 e0 += embedding_energy
 
         # Interactions
-        node_es_list = [pair_node_energy]
+        node_es_list: List[torch.Tensor] = []
         node_feats_list: List[torch.Tensor] = []
         node_qs_list: List[torch.Tensor] = []
 
@@ -204,12 +222,19 @@ class MACELES(ScaleShiftMACE):
                 num_atoms_arange, node_heads
             ]  # type:ignore
             node_qs_list.append(node_qs)
-            node_es_list.append(node_es)
+            node_es_list.append(_match_node_energy_shape(node_es))
 
         node_feats_out = torch.cat(node_feats_list, dim=-1)
-        node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)
-        node_inter_es = self.scale_shift(node_inter_es, node_heads)
-        inter_e = scatter_sum(node_inter_es, data["batch"], dim=-1, dim_size=num_graphs)
+        if node_es_list:
+            node_learned_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)
+        else:
+            node_learned_es = torch.zeros_like(pair_node_energy)
+        node_learned_es = self.scale_shift(node_learned_es, node_heads)
+        # Do not scale_shift empirical pair energy (mirrors ScaleShiftMACE).
+        node_inter_es = node_learned_es + pair_node_energy
+        inter_e = scatter_sum(
+            node_inter_es, data["batch"], dim=0, dim_size=num_graphs
+        )
 
         total_energy = e0 + inter_e
         node_energy = node_e0.clone().double() + node_inter_es.clone().double()
@@ -244,6 +269,18 @@ class MACELES(ScaleShiftMACE):
             compute_hessian=compute_hessian,
             compute_edge_forces=compute_edge_forces,
         )
+
+        # Match MACE output sanitization: finite box on reported totals and forces.
+        cv = _FORWARD_OUTPUT_CLAMP
+        total_energy = torch.nan_to_num(
+            total_energy, posinf=cv, neginf=-cv
+        ).clamp(-cv, cv)
+        if forces is not None:
+            forces = torch.nan_to_num(forces, posinf=cv, neginf=-cv).clamp(-cv, cv)
+        if edge_forces is not None:
+            edge_forces = torch.nan_to_num(
+                edge_forces, posinf=cv, neginf=-cv
+            ).clamp(-cv, cv)
 
         atomic_virials: Optional[torch.Tensor] = None
         atomic_stresses: Optional[torch.Tensor] = None

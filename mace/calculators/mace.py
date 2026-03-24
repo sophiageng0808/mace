@@ -24,7 +24,7 @@ from mace import data as mace_data
 from mace.modules.utils import extract_invariant
 from mace.tools import torch_geometric, torch_tools, utils
 from mace.tools.compile import prepare
-from mace.tools.scripts_utils import extract_model, load_model
+from mace.tools.scripts_utils import extract_model
 
 try:
     from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
@@ -196,7 +196,7 @@ class MACECalculator(Calculator):
 
             # Load models from files
             self.models = [
-                load_model(model_path, map_location=device)
+                torch.load(f=model_path, map_location=device)
                 for model_path in model_paths
             ]
 

@@ -45,27 +45,47 @@ def build_pair_repulsion(
     *,
     num_polynomial_cutoff: int,
     pair_repulsion_kinds: Optional[Union[List[str], str]],
-    pair_repulsion_mode: int,
     zbl_p: int,
     zbl_scale: float,
     r12_scale: float,
     r12_cutoff: Optional[float],
     r12_switch_width: Optional[float],
     pair_repulsion_r_min: float,
-) -> PairRepulsionSwitch:
+) -> torch.nn.Module:
+    """Construct ``PairRepulsionSwitch`` with only the active physics module (zbl *or* r12).
+
+    R12 uses ``num_polynomial_cutoff`` as the outer envelope exponent to match the main
+    radial cutoff polynomial degree. Shared ``pair_repulsion_r_min`` floors edge lengths
+    inside both formulas for numerical stability.
+    """
+    # Exactly one of zbl or r12 (no zbl+r12 stack; no repulsion => pair_repulsion=False on MACE).
     if pair_repulsion_kinds is None:
         pair_repulsion_kinds = ["zbl"]
     if isinstance(pair_repulsion_kinds, str):
         pair_repulsion_kinds = [
             k.strip() for k in pair_repulsion_kinds.split(",") if k.strip()
         ]
-    zbl_mod = ZBLRepulsion(
-        p=zbl_p,
-        scale=zbl_scale,
-        r_min=pair_repulsion_r_min,
-        apply_cutoff=True,
-        assume_directed_double=True,
-    )
+    kinds_list = [k for k in pair_repulsion_kinds if k]
+    if len(kinds_list) != 1 or kinds_list[0] not in ("zbl", "r12"):
+        raise ValueError(
+            "pair_repulsion_kinds must be exactly ['zbl'] or ['r12']; "
+            "combined terms and multi-kind lists are not supported."
+        )
+    pair_repulsion_kinds = kinds_list
+    # One submodule only: smaller state_dict and no dead parameters for the unused term.
+    if pair_repulsion_kinds[0] == "zbl":
+        zbl_mod = ZBLRepulsion(
+            p=zbl_p,
+            scale=zbl_scale,
+            r_min=pair_repulsion_r_min,
+            apply_cutoff=True,
+            assume_directed_double=True,
+        )
+        return PairRepulsionSwitch(
+            kinds=pair_repulsion_kinds,
+            zbl=zbl_mod,
+            r12=None,
+        )
     r12_mod = R12Repulsion(
         p=num_polynomial_cutoff,
         c12=r12_scale,
@@ -77,10 +97,10 @@ def build_pair_repulsion(
     )
     return PairRepulsionSwitch(
         kinds=pair_repulsion_kinds,
-        zbl=zbl_mod,
+        zbl=None,
         r12=r12_mod,
-        mode=pair_repulsion_mode,
     )
+
 
 @compile_mode("script")
 class LinearNodeEmbeddingBlock(torch.nn.Module):

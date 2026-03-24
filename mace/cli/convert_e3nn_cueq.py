@@ -9,7 +9,7 @@ from e3nn import o3
 from mace.modules.wrapper_ops import CuEquivarianceConfig
 from mace.tools.cg import O3_e3nn
 from mace.tools.cg_cueq_tools import symmetric_contraction_proj
-from mace.tools.scripts_utils import extract_config_mace_model, load_model
+from mace.tools.scripts_utils import extract_config_mace_model
 
 try:
     import cuequivariance as cue
@@ -182,7 +182,7 @@ def run(
     # logging.warning(f"Loading model")
     # check if input_model is a path or a model
     if isinstance(input_model, str):
-        source_model = load_model(input_model, map_location=device)
+        source_model = torch.load(input_model, map_location=device)
     else:
         source_model = input_model
     default_dtype = next(source_model.parameters()).dtype

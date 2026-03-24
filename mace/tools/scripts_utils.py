@@ -10,7 +10,6 @@ import dataclasses
 import json
 import logging
 import os
-import pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -21,7 +20,6 @@ from e3nn import o3
 from torch.optim.swa_utils import SWALR, AveragedModel
 
 from mace import data, modules, tools
-from mace.modules.wrapper_ops import CuEquivarianceConfig, OEQConfig
 from mace.data import KeySpecification
 from mace.tools.train import SWAContainer
 
@@ -226,6 +224,48 @@ def print_git_commit():
         return "None"
 
 
+def _repulsion_config_from_model(model_obj: torch.nn.Module) -> Dict[str, Any]:
+    """Read ``pair_repulsion_fn`` hyperparameters for checkpoint JSON (only one of zbl/r12 exists)."""
+    cfg: Dict[str, Any] = {}
+    if not hasattr(model_obj, "pair_repulsion_fn"):
+        cfg["pair_repulsion"] = False
+        return cfg
+    rep = model_obj.pair_repulsion_fn
+    cfg["pair_repulsion"] = True
+    cfg["pair_repulsion_kinds"] = getattr(rep, "kinds", None)
+    zbl = getattr(rep, "zbl", None)
+    if zbl is not None and hasattr(zbl, "p"):
+        try:
+            cfg["zbl_p"] = int(zbl.p)
+        except (TypeError, ValueError):
+            cfg["zbl_p"] = zbl.p
+    if zbl is not None and hasattr(zbl, "scale"):
+        try:
+            cfg["zbl_scale"] = float(zbl.scale.item())
+        except (AttributeError, ValueError):
+            cfg["zbl_scale"] = float(zbl.scale)
+    if zbl is not None and hasattr(zbl, "r_min"):
+        cfg["pair_repulsion_r_min"] = float(zbl.r_min)
+    r12 = getattr(rep, "r12", None)
+    if "pair_repulsion_r_min" not in cfg and r12 is not None and hasattr(r12, "r_min"):
+        cfg["pair_repulsion_r_min"] = float(r12.r_min)
+    if r12 is not None and hasattr(r12, "c12"):
+        cfg["r12_scale"] = float(r12.c12)
+    if r12 is not None and hasattr(r12, "r12_cutoff"):
+        try:
+            cutoff_val = float(r12.r12_cutoff.item())
+        except (AttributeError, ValueError):
+            cutoff_val = float(r12.r12_cutoff)
+        cfg["r12_cutoff"] = None if cutoff_val <= 0 else cutoff_val
+    if r12 is not None and hasattr(r12, "r12_switch_width"):
+        try:
+            width_val = float(r12.r12_switch_width.item())
+        except (AttributeError, ValueError):
+            width_val = float(r12.r12_switch_width)
+        cfg["r12_switch_width"] = None if width_val <= 0 else width_val
+    return cfg
+
+
 def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
     if model.__class__.__name__ not in ["ScaleShiftMACE", "MACELES"]:
         return {"error": "Model is not a ScaleShiftMACE or MACELES model"}
@@ -246,11 +286,6 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
             return "Agnesi"
         if radial.distance_transform.__class__.__name__ == "SoftTransform":
             return "Soft"
-        if radial.distance_transform.__class__.__name__ in (
-            "PairRepulsionSwitch",
-            "PairRepulsionSoftTransform",
-        ):
-            return "Soft"
         return radial.distance_transform.__class__.__name__
 
     scale = model.scale_shift.scale
@@ -267,50 +302,7 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         )
     except AttributeError:
         correlation = model.products[0].symmetric_contractions.contraction_degree
-    def _repulsion_config_from_model(model_obj: torch.nn.Module) -> Dict[str, Any]:
-        cfg: Dict[str, Any] = {}
-        if not hasattr(model_obj, "pair_repulsion_fn"):
-            cfg["pair_repulsion"] = False
-            return cfg
-
-        rep = model_obj.pair_repulsion_fn
-        cfg["pair_repulsion"] = True
-        cfg["pair_repulsion_kinds"] = getattr(rep, "kinds", None)
-        cfg["pair_repulsion_mode"] = int(getattr(rep, "mode", 0))
-
-        zbl = getattr(rep, "zbl", None)
-        if zbl is not None and hasattr(zbl, "p"):
-            try:
-                cfg["zbl_p"] = int(zbl.p)
-            except Exception:  # pylint: disable=broad-except
-                cfg["zbl_p"] = zbl.p
-        if zbl is not None and hasattr(zbl, "scale"):
-            try:
-                cfg["zbl_scale"] = float(zbl.scale.item())
-            except Exception:  # pylint: disable=broad-except
-                cfg["zbl_scale"] = float(zbl.scale)
-        if zbl is not None and hasattr(zbl, "r_min"):
-            cfg["pair_repulsion_r_min"] = float(zbl.r_min)
-
-        r12 = getattr(rep, "r12", None)
-        if r12 is not None and hasattr(r12, "c12"):
-            cfg["r12_scale"] = float(r12.c12)
-        if r12 is not None and hasattr(r12, "r12_cutoff"):
-            try:
-                cutoff_val = float(r12.r12_cutoff.item())
-            except Exception:  # pylint: disable=broad-except
-                cutoff_val = float(r12.r12_cutoff)
-            cfg["r12_cutoff"] = None if cutoff_val <= 0 else cutoff_val
-        if r12 is not None and hasattr(r12, "r12_switch_width"):
-            try:
-                width_val = float(r12.r12_switch_width.item())
-            except Exception:  # pylint: disable=broad-except
-                width_val = float(r12.r12_switch_width)
-            cfg["r12_switch_width"] = None if width_val <= 0 else width_val
-        return cfg
-
     repulsion_cfg = _repulsion_config_from_model(model)
-
     config = {
         "r_max": model.r_max.item(),
         "num_bessel": len(model.radial_embedding.bessel_fn.bessel_weights),
@@ -576,113 +568,29 @@ def convert_from_json_format(dict_input):
     dict_output["correlation"] = int(dict_input["correlation"])
     dict_output["radial_type"] = dict_input["radial_type"]
     dict_output["radial_MLP"] = ast.literal_eval(dict_input["radial_MLP"])
-    if "edge_irreps" in dict_input:
-        edge_irreps = dict_input["edge_irreps"]
-        if edge_irreps in (None, "None"):
-            dict_output["edge_irreps"] = None
-        elif isinstance(edge_irreps, str):
-            dict_output["edge_irreps"] = o3.Irreps(edge_irreps)
-        else:
-            dict_output["edge_irreps"] = edge_irreps
-    if "cueq_config" in dict_input:
-        cueq_config = dict_input["cueq_config"]
-        if cueq_config in (None, "None"):
-            dict_output["cueq_config"] = None
-        elif isinstance(cueq_config, dict):
-            dict_output["cueq_config"] = CuEquivarianceConfig(**cueq_config)
-        elif isinstance(cueq_config, str):
-            try:
-                cueq_parsed = ast.literal_eval(cueq_config)
-            except (ValueError, SyntaxError):
-                cueq_parsed = None
-            dict_output["cueq_config"] = (
-                CuEquivarianceConfig(**cueq_parsed)
-                if isinstance(cueq_parsed, dict)
-                else None
-            )
-        else:
-            dict_output["cueq_config"] = cueq_config
-    if "oeq_config" in dict_input:
-        oeq_config = dict_input["oeq_config"]
-        if oeq_config in (None, "None"):
-            dict_output["oeq_config"] = None
-        elif isinstance(oeq_config, dict):
-            dict_output["oeq_config"] = OEQConfig(**oeq_config)
-        elif isinstance(oeq_config, str):
-            try:
-                oeq_parsed = ast.literal_eval(oeq_config)
-            except (ValueError, SyntaxError):
-                oeq_parsed = None
-            dict_output["oeq_config"] = (
-                OEQConfig(**oeq_parsed) if isinstance(oeq_parsed, dict) else None
-            )
-        else:
-            dict_output["oeq_config"] = oeq_config
-    if "readout_cls" in dict_input:
-        readout_cls = dict_input["readout_cls"]
-        if isinstance(readout_cls, str):
-            class_name = readout_cls
-            if "'" in readout_cls:
-                class_name = readout_cls.split("'")[-2].split(".")[-1]
-            readout_map = {
-                "LinearReadoutBlock": modules.blocks.LinearReadoutBlock,
-                "NonLinearReadoutBlock": modules.blocks.NonLinearReadoutBlock,
-                "NonLinearBiasReadoutBlock": modules.blocks.NonLinearBiasReadoutBlock,
-                "LinearDipoleReadoutBlock": modules.blocks.LinearDipoleReadoutBlock,
-                "NonLinearDipoleReadoutBlock": modules.blocks.NonLinearDipoleReadoutBlock,
-                "LinearDipolePolarReadoutBlock": (
-                    modules.blocks.LinearDipolePolarReadoutBlock
-                ),
-                "NonLinearDipolePolarReadoutBlock": (
-                    modules.blocks.NonLinearDipolePolarReadoutBlock
-                ),
-            }
-            dict_output["readout_cls"] = readout_map.get(class_name)
-        else:
-            dict_output["readout_cls"] = readout_cls
-    def _parse_bool(value):
-        if isinstance(value, bool):
-            return value
-        if value in (None, "None"):
-            return False
-        if isinstance(value, str):
-            val = value.strip().lower()
-            if val in ("true", "1", "yes", "y", "t"):
-                return True
-            if val in ("false", "0", "no", "n", "f"):
-                return False
-        return bool(value)
-
-    for key in (
-        "use_reduced_cg",
-        "use_so3",
-        "use_edge_irreps_first",
-        "use_agnostic_product",
-        "use_last_readout_only",
-        "use_embedding_readout",
-        "apply_cutoff",
-    ):
-        if key in dict_input:
-            dict_output[key] = _parse_bool(dict_input[key])
-
-    if "heads" in dict_input:
-        heads = dict_input["heads"]
-        if isinstance(heads, str):
-            heads = ast.literal_eval(heads)
-        dict_output["heads"] = heads
-
-    if "pair_repulsion" in dict_input:
-        if isinstance(dict_input["pair_repulsion"], str):
-            dict_output["pair_repulsion"] = ast.literal_eval(dict_input["pair_repulsion"])
-        else:
-            dict_output["pair_repulsion"] = bool(dict_input["pair_repulsion"])
+    pr_val = dict_input["pair_repulsion"]
+    if isinstance(pr_val, str):
+        dict_output["pair_repulsion"] = ast.literal_eval(pr_val)
+    else:
+        dict_output["pair_repulsion"] = bool(pr_val)
+    if dict_output["pair_repulsion"]:
+        dict_output.setdefault("pair_repulsion_kinds", ["zbl"])
+        dict_output.setdefault("pair_repulsion_r_min", 0.2)
+        dict_output.setdefault("zbl_p", 6)
+        dict_output.setdefault("zbl_scale", 1.0)
+        dict_output.setdefault("r12_scale", 1.0)
+        dict_output.setdefault("r12_cutoff", None)
+        dict_output.setdefault("r12_switch_width", None)
     if "pair_repulsion_kinds" in dict_input:
-        kinds = dict_input["pair_repulsion_kinds"]
-        if isinstance(kinds, str):
-            kinds = ast.literal_eval(kinds)
-        dict_output["pair_repulsion_kinds"] = kinds
-    if "pair_repulsion_mode" in dict_input:
-        dict_output["pair_repulsion_mode"] = int(dict_input["pair_repulsion_mode"])
+        # Exactly one kind; legacy JSON may list two — keep first only.
+        pk = dict_input["pair_repulsion_kinds"]
+        if isinstance(pk, str):
+            pk = [pk]
+        if isinstance(pk, list) and len(pk) > 1:
+            pk = [pk[0]]
+        dict_output["pair_repulsion_kinds"] = pk
+    # pair_repulsion_mode removed from the model; strip legacy key from copied configs.
+    dict_output.pop("pair_repulsion_mode", None)
     if "zbl_p" in dict_input:
         dict_output["zbl_p"] = int(dict_input["zbl_p"])
     if "zbl_scale" in dict_input:
@@ -701,26 +609,9 @@ def convert_from_json_format(dict_input):
         )
     if "pair_repulsion_r_min" in dict_input:
         dict_output["pair_repulsion_r_min"] = float(dict_input["pair_repulsion_r_min"])
-    if "embedding_specs" in dict_input:
-        specs = dict_input["embedding_specs"]
-        if specs in (None, "None"):
-            dict_output["embedding_specs"] = None
-        elif isinstance(specs, str):
-            dict_output["embedding_specs"] = ast.literal_eval(specs)
-        else:
-            dict_output["embedding_specs"] = specs
     dict_output["distance_transform"] = dict_input["distance_transform"]
-    def _parse_scale_shift(value):
-        if isinstance(value, (list, tuple, np.ndarray)):
-            return np.asarray(value, dtype=float)
-        return float(value)
-
-    dict_output["atomic_inter_scale"] = _parse_scale_shift(
-        dict_input["atomic_inter_scale"]
-    )
-    dict_output["atomic_inter_shift"] = _parse_scale_shift(
-        dict_input["atomic_inter_shift"]
-    )
+    dict_output["atomic_inter_scale"] = float(dict_input["atomic_inter_scale"])
+    dict_output["atomic_inter_shift"] = float(dict_input["atomic_inter_shift"])
 
     return dict_output
 
@@ -737,56 +628,27 @@ def load_from_json(f: str, map_location: str = "cpu") -> torch.nn.Module:
     return model_load_yaml.to(map_location)
 
 
-def save_model(
-    model: torch.nn.Module,
-    path: Union[str, Path],
-    *,
-    config_model: Optional[torch.nn.Module] = None,
-) -> str:
-    """
-    Save a model to disk.
-
-    Falls back to saving state_dict + config when full pickling fails.
-    Returns "full" or "state_dict" to indicate the path contents.
-    """
-    try:
-        torch.save(model, path)
-        return "full"
-    except (pickle.PickleError, TypeError, AttributeError) as exc:
-        logging.warning(
-            "torch.save failed (%s). Saving state_dict + config instead.", exc
+def _e0_json_entry_to_scalar(value):
+    """JSON may store one float per Z, or a dict of charge/state index -> energy (use neutral 0)."""
+    if isinstance(value, dict):
+        if not value:
+            raise ValueError("E0s JSON contains an empty object for an element.")
+        if "0" in value:
+            return float(value["0"])
+        if 0 in value:
+            return float(value[0])
+        if len(value) == 1:
+            return float(next(iter(value.values())))
+        raise ValueError(
+            "E0s JSON has multiple states for an element but no neutral entry '0'. "
+            f"Keys found: {list(value.keys())}. Use {{\"0\": energy_eV}} or a single float per Z."
         )
-        source_model = model if config_model is None else config_model
-        payload = {
-            "state_dict": model.state_dict(),
-            "config": convert_to_json_format(extract_config_mace_model(source_model)),
-            "model_class": model.__class__.__name__,
-        }
-        torch.save(payload, path)
-        return "state_dict"
+    return float(value)
 
 
-def load_model(
-    f: str,
-    *,
-    map_location: str = "cpu",
-    weights_only: Optional[bool] = None,
-) -> torch.nn.Module:
-    """
-    Load a full model, or reconstruct from state_dict+config payload.
-    """
-    load_kwargs: Dict[str, Any] = {"map_location": map_location}
-    if weights_only is not None:
-        load_kwargs["weights_only"] = weights_only
-    loaded = torch.load(f, **load_kwargs)
-    if isinstance(loaded, dict) and "state_dict" in loaded and "config" in loaded:
-        config = convert_from_json_format(loaded["config"])
-        model_class = loaded.get("model_class", "ScaleShiftMACE")
-        model_cls = modules.MACELES if model_class == "MACELES" else modules.ScaleShiftMACE
-        model = model_cls(**config)
-        model.load_state_dict(loaded["state_dict"])
-        return model.to(map_location)
-    return loaded
+def parse_e0s_json_object(loaded: Dict[str, Any]) -> Dict[int, float]:
+    """Parse top-level E0s JSON object to atomic number -> isolated energy (eV)."""
+    return {int(key): _e0_json_entry_to_scalar(val) for key, val in loaded.items()}
 
 
 def get_atomic_energies(E0s, train_collection, z_table) -> dict:
@@ -812,10 +674,8 @@ def get_atomic_energies(E0s, train_collection, z_table) -> dict:
             if E0s.endswith(".json"):
                 logging.info(f"Loading atomic energies from {E0s}")
                 with open(E0s, "r", encoding="utf-8") as f:
-                    atomic_energies_dict = json.load(f)
-                    atomic_energies_dict = {
-                        int(key): value for key, value in atomic_energies_dict.items()
-                    }
+                    loaded = json.load(f)
+                atomic_energies_dict = parse_e0s_json_object(loaded)
             else:
                 try:
                     atomic_energies_eval = ast.literal_eval(E0s)
