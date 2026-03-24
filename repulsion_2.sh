@@ -216,6 +216,7 @@ esac
     --batch_size "$BATCH_SIZE" \
     --valid_batch_size "$VALID_BATCH_SIZE" \
     --max_valid_samples "$MAX_VALID_SAMPLES" \
+    # --pin_memory False \
     --default_dtype "$DEFAULT_DTYPE" \
     --num_channels "$NUM_CHANNELS" \
     --num_interactions "$NUM_INTERACTIONS" \
