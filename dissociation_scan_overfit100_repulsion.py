@@ -324,24 +324,21 @@ def run_scan(
     e_mono = monotone_nondecreasing(raw_e)
     f_mono = monotone_nondecreasing(raw_f)
     f_abs_mono = monotone_nondecreasing(raw_f_abs)
-    failed = (not e_mono) or (not f_mono)
-    # Don't fail when clamp is hit ONLY if the monotonicity breaks are clamp artifacts:
-    # every violation must involve at least one clamped value (|v|>=9.9e5).
-    # Real monotonicity failures (e.g. non-monotone in normal range) still count as failed.
+    # Failure is defined only from force (-Fi·u) monotonicity; energy is still logged below.
+    failed = not f_mono
+    # Don't fail when clamp is hit ONLY if force monotonicity breaks are clamp artifacts.
     min_e, max_e = float(np.min(raw_e)), float(np.max(raw_e))
     hit_clamp = (min_e <= -CLAMP_THRESHOLD) or (max_e >= CLAMP_THRESHOLD)
     if hit_clamp and failed:
-        e_clamp_only = _violations_involve_only_clamp(raw_e)
         f_clamp_only = _violations_involve_only_clamp(raw_f)
-        if e_clamp_only and f_clamp_only:
+        if f_clamp_only:
             failed = False
     has_nonfinite = (n_nan_energy + n_inf_energy + n_nan_force + n_inf_force) > 0
     has_nan_only = (n_nan_energy + n_nan_force) > 0 and (n_inf_energy + n_inf_force) == 0
 
-    e_fail_idx = first_failure_index(raw_e)
     f_fail_idx = first_failure_index(raw_f)
-    fail_candidates = [idx for idx in (e_fail_idx, f_fail_idx) if idx is not None]
-    d_fail = float(dist[min(fail_candidates)]) if fail_candidates else np.nan
+    # d_fail: distance at first force monotonicity failure (aligned with `failed`).
+    d_fail = float(dist[f_fail_idx]) if f_fail_idx is not None else np.nan
 
     row = [
         mol_label, i, j, model_name, group_name,
