@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-import torch.distributed
 from e3nn import o3
 from torch.optim.swa_utils import SWALR, AveragedModel
 
@@ -702,16 +701,7 @@ def get_avg_num_neighbors(head_configs, args, train_loader, device):
     if all(head_config.compute_avg_num_neighbors for head_config in head_configs):
         logging.info("Computing average number of neighbors")
         avg_num_neighbors = modules.compute_avg_num_neighbors(train_loader)
-        if args.distributed:
-            num_graphs = torch.tensor(len(train_loader.dataset)).to(device)
-            num_neighbors = num_graphs * torch.tensor(avg_num_neighbors).to(device)
-            torch.distributed.all_reduce(num_graphs, op=torch.distributed.ReduceOp.SUM)
-            torch.distributed.all_reduce(
-                num_neighbors, op=torch.distributed.ReduceOp.SUM
-            )
-            avg_num_neighbors_out = (num_neighbors / num_graphs).item()
-        else:
-            avg_num_neighbors_out = avg_num_neighbors
+        avg_num_neighbors_out = avg_num_neighbors
     else:
         assert any(
             head_config.avg_num_neighbors is not None for head_config in head_configs

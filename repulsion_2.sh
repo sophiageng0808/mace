@@ -19,6 +19,7 @@ H5="/scratch/$USER/mace/data/train4M_h5"
 ATOMIC_NUMS="[$(python3 -c "import json; d=json.load(open('$H5/E0s.json')); print(','.join(str(k) for k in sorted(map(int, d))))" 2>/dev/null)]"
 
 EPOCHS="${EPOCHS:-200}"
+MAX_SAMPLES_PER_EPOCH="${MAX_SAMPLES_PER_EPOCH:-20000}"
 ZBL_SCALE="${ZBL_SCALE:-1.0}"
 R12_SCALE="${R12_SCALE:-1.0}"
 R12_CUTOFF="${R12_CUTOFF:-0.8}"
@@ -86,6 +87,7 @@ python "$REPULSION_WT/mace/cli/run_train.py" \
   --E0s="$H5_ROOT/E0s.json" \
   --model="$MODEL" \
   --max_num_epochs="$EPOCHS" \
+  --max_samples_per_epoch="$MAX_SAMPLES_PER_EPOCH" \
   ${ATOMIC_NUMS:+--atomic_numbers "$ATOMIC_NUMS"} \
   --patience=25 \
   --scheduler_patience=25 \

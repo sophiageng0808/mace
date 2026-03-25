@@ -13,12 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-import torch.distributed
-from torch.nn.parallel import DistributedDataParallel
 from torch.optim import LBFGS
 from torch.optim.swa_utils import SWALR, AveragedModel
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from torch_ema import ExponentialMovingAverage
 from torchmetrics import Metric
 
@@ -166,28 +163,22 @@ def train(
     ema: Optional[ExponentialMovingAverage] = None,
     max_grad_norm: Optional[float] = 10.0,
     log_wandb: bool = False,
-    distributed: bool = False,
     save_all_checkpoints: bool = False,
     plotter: TrainingPlotter = None,
-    distributed_model: Optional[DistributedDataParallel] = None,
-    train_sampler: Optional[DistributedSampler] = None,
-    rank: Optional[int] = 0,
+    max_samples_per_epoch: Optional[int] = None,
+    train_shuffle_seed: Optional[int] = None,
 ):
     lowest_loss = np.inf
     valid_loss = np.inf
     patience_counter = 0
     swa_start = True
     keep_last = False
-    if log_wandb:
-        import wandb
-
     if max_grad_norm is not None:
         logging.info(f"Using gradient clipping with tolerance={max_grad_norm:.3f}")
 
     logging.info("")
     logging.info("===========TRAINING===========")
-    logging.info("Started training, reporting errors on validation set")
-    logging.info("Loss metrics on validation set")
+    cap = max_samples_per_epoch if max_samples_per_epoch else None
     epoch = start_epoch
 
     # log validation loss before _any_ training
@@ -204,9 +195,8 @@ def train(
         )
     valid_loss = valid_loss_head  # consider only the last head for the checkpoint
 
-    # variable used for broadcast by rank == 0 if epoch loop is exited early, e.g. patience
-    exit_now = torch.zeros(1, device=device) if distributed else None
     while epoch < max_num_epochs:
+        patience_stop = False
         # LR scheduler and SWA update
         if swa is None or epoch < swa.start:
             if epoch > start_epoch:
@@ -225,11 +215,12 @@ def train(
                 swa.scheduler.step()
 
         # Train
-        if distributed:
-            train_sampler.set_epoch(epoch)
         if "ScheduleFree" in type(optimizer).__name__:
             optimizer.train()
-        train_one_epoch(
+        gen = getattr(train_loader, "generator", None)
+        if train_shuffle_seed is not None and gen is not None:
+            gen.manual_seed(int(train_shuffle_seed) + int(epoch))
+        samples_this_epoch = train_one_epoch(
             model=model,
             loss_fn=loss_fn,
             data_loader=train_loader,
@@ -240,18 +231,12 @@ def train(
             ema=ema,
             logger=logger,
             device=device,
-            distributed=distributed,
-            distributed_model=distributed_model,
-            rank=rank,
+            max_samples_per_epoch=cap,
         )
-        if distributed:
-            torch.distributed.barrier()
 
         # Validate
         if epoch % eval_interval == 0:
-            model_to_evaluate = (
-                model if distributed_model is None else distributed_model
-            )
+            model_to_evaluate = model
             param_context = (
                 ema.average_parameters() if ema is not None else nullcontext()
             )
@@ -267,80 +252,84 @@ def train(
                         output_args=output_args,
                         device=device,
                     )
-                    if rank == 0:
-                        valid_err_log(
-                            valid_loss_head,
-                            eval_metrics,
-                            logger,
-                            log_errors,
-                            epoch,
-                            valid_loader_name,
-                        )
-                        if log_wandb:
-                            wandb_log_dict[valid_loader_name] = {
-                                "epoch": epoch,
-                                "valid_loss": valid_loss_head,
-                                "valid_rmse_e_per_atom": eval_metrics[
-                                    "rmse_e_per_atom"
-                                ],
-                                "valid_rmse_f": eval_metrics["rmse_f"],
-                            }
+                    valid_err_log(
+                        valid_loss_head,
+                        eval_metrics,
+                        logger,
+                        log_errors,
+                        epoch,
+                        valid_loader_name,
+                    )
+                    if log_wandb:
+                        wandb_log_dict[valid_loader_name] = {
+                            "epoch": epoch,
+                            "valid_loss": valid_loss_head,
+                            "valid_rmse_e_per_atom": eval_metrics[
+                                "rmse_e_per_atom"
+                            ],
+                            "valid_rmse_f": eval_metrics["rmse_f"],
+                        }
                 if plotter and epoch % plotter.plot_frequency == 0:
                     try:
-                        plotter.plot(epoch, model_to_evaluate, rank)
+                        plotter.plot(epoch, model_to_evaluate)
                     except Exception as e:  # pylint: disable=broad-except
                         logging.debug(f"Plotting failed: {e}")
                 valid_loss = (
                     valid_loss_head  # consider only the last head for the checkpoint
                 )
             if log_wandb:
-                wandb.log(wandb_log_dict)
-            if rank == 0:
-                if valid_loss >= lowest_loss:
-                    patience_counter += 1
-                    if patience_counter >= patience:
-                        if swa is not None and epoch < swa.start:
-                            logging.info(
-                                f"Stopping optimization after {patience_counter} epochs without improvement and starting Stage Two"
-                            )
-                            epoch = swa.start
-                        else:
-                            logging.info(
-                                f"Stopping optimization after {patience_counter} epochs without improvement"
-                            )
-                            if exit_now is not None:
-                                exit_now.fill_(1)
-                    if save_all_checkpoints:
-                        param_context = (
-                            ema.average_parameters()
-                            if ema is not None
-                            else nullcontext()
+                import wandb
+
+                payload = dict(wandb_log_dict)
+                payload["train/samples_this_epoch"] = samples_this_epoch
+                for i, pg in enumerate(optimizer.param_groups):
+                    key = (
+                        "learning_rate"
+                        if len(optimizer.param_groups) == 1
+                        else f"learning_rate/pg{i}"
+                    )
+                    payload[key] = pg["lr"]
+                wandb.log(payload, step=epoch)
+            if valid_loss >= lowest_loss:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    if swa is not None and epoch < swa.start:
+                        logging.info(
+                            f"Stopping optimization after {patience_counter} epochs without improvement and starting Stage Two"
                         )
-                        with param_context:
-                            checkpoint_handler.save(
-                                state=CheckpointState(model, optimizer, lr_scheduler),
-                                epochs=epoch,
-                                keep_last=True,
-                            )
-                else:
-                    lowest_loss = valid_loss
-                    patience_counter = 0
+                        epoch = swa.start
+                    else:
+                        logging.info(
+                            f"Stopping optimization after {patience_counter} epochs without improvement"
+                        )
+                        patience_stop = True
+                if save_all_checkpoints:
                     param_context = (
-                        ema.average_parameters() if ema is not None else nullcontext()
+                        ema.average_parameters()
+                        if ema is not None
+                        else nullcontext()
                     )
                     with param_context:
                         checkpoint_handler.save(
                             state=CheckpointState(model, optimizer, lr_scheduler),
                             epochs=epoch,
-                            keep_last=keep_last,
+                            keep_last=True,
                         )
-                        keep_last = False or save_all_checkpoints
-        if distributed:
-            torch.distributed.barrier()
-        if exit_now is not None:
-            torch.distributed.broadcast(exit_now, src=0)
-            if exit_now == 1:
-                break
+            else:
+                lowest_loss = valid_loss
+                patience_counter = 0
+                param_context = (
+                    ema.average_parameters() if ema is not None else nullcontext()
+                )
+                with param_context:
+                    checkpoint_handler.save(
+                        state=CheckpointState(model, optimizer, lr_scheduler),
+                        epochs=epoch,
+                        keep_last=keep_last,
+                    )
+                    keep_last = False or save_all_checkpoints
+        if patience_stop:
+            break
 
         epoch += 1
 
@@ -358,15 +347,11 @@ def train_one_epoch(
     ema: Optional[ExponentialMovingAverage],
     logger: MetricsLogger,
     device: torch.device,
-    distributed: bool,
-    distributed_model: Optional[DistributedDataParallel] = None,
-    rank: Optional[int] = 0,
-) -> None:
-    model_to_train = model if distributed_model is None else distributed_model
-
+    max_samples_per_epoch: Optional[int] = None,
+) -> int:
     if isinstance(optimizer, LBFGS):
-        _, opt_metrics = take_step_lbfgs(
-            model=model_to_train,
+        _, opt_metrics, samples_seen = take_step_lbfgs(
+            model=model,
             loss_fn=loss_fn,
             data_loader=data_loader,
             optimizer=optimizer,
@@ -374,29 +359,31 @@ def train_one_epoch(
             output_args=output_args,
             max_grad_norm=max_grad_norm,
             device=device,
-            distributed=distributed,
-            rank=rank,
+            max_samples_per_epoch=max_samples_per_epoch,
         )
         opt_metrics["mode"] = "opt"
         opt_metrics["epoch"] = epoch
-        if rank == 0:
-            logger.log(opt_metrics)
-    else:
-        for batch in data_loader:
-            _, opt_metrics = take_step(
-                model=model_to_train,
-                loss_fn=loss_fn,
-                batch=batch,
-                optimizer=optimizer,
-                ema=ema,
-                output_args=output_args,
-                max_grad_norm=max_grad_norm,
-                device=device,
-            )
-            opt_metrics["mode"] = "opt"
-            opt_metrics["epoch"] = epoch
-            if rank == 0:
-                logger.log(opt_metrics)
+        logger.log(opt_metrics)
+        return samples_seen
+    samples_seen = 0
+    for batch in data_loader:
+        _, opt_metrics = take_step(
+            model=model,
+            loss_fn=loss_fn,
+            batch=batch,
+            optimizer=optimizer,
+            ema=ema,
+            output_args=output_args,
+            max_grad_norm=max_grad_norm,
+            device=device,
+        )
+        opt_metrics["mode"] = "opt"
+        opt_metrics["epoch"] = epoch
+        logger.log(opt_metrics)
+        samples_seen += int(batch.num_graphs)
+        if max_samples_per_epoch is not None and samples_seen >= max_samples_per_epoch:
+            break
+    return samples_seen
 
 
 def take_step(
@@ -452,41 +439,37 @@ def take_step_lbfgs(
     output_args: Dict[str, bool],
     max_grad_norm: Optional[float],
     device: torch.device,
-    distributed: bool,
-    rank: int,
-) -> Tuple[float, Dict[str, Any]]:
+    max_samples_per_epoch: Optional[int] = None,
+) -> Tuple[float, Dict[str, Any], int]:
     start_time = time.time()
     logging.debug(
         f"Max Allocated: {torch.cuda.max_memory_allocated() / 1024**2:.2f} MB"
     )
 
-    total_sample_count = 0
-    for batch in data_loader:
-        total_sample_count += batch.num_graphs
+    if max_samples_per_epoch is None:
+        total_sample_count = 0
+        for batch in data_loader:
+            total_sample_count += batch.num_graphs
+        batch_iter = data_loader
+    else:
+        batch_list = []
+        seen = 0
+        for batch in data_loader:
+            batch_list.append(batch)
+            seen += batch.num_graphs
+            if seen >= max_samples_per_epoch:
+                break
+        total_sample_count = int(sum(b.num_graphs for b in batch_list))
+        batch_iter = batch_list
 
-    if distributed:
-        global_sample_count = torch.tensor(total_sample_count, device=device)
-        torch.distributed.all_reduce(
-            global_sample_count, op=torch.distributed.ReduceOp.SUM
-        )
-        total_sample_count = global_sample_count.item()
-
-    signal = torch.zeros(1, device=device) if distributed else None
+    if total_sample_count == 0:
+        raise RuntimeError("LBFGS training epoch has no samples (empty data loader).")
 
     def closure():
-        if distributed:
-            if rank == 0:
-                signal.fill_(1)
-                torch.distributed.broadcast(signal, src=0)
-
-            for param in model.parameters():
-                torch.distributed.broadcast(param.data, src=0)
-
         optimizer.zero_grad(set_to_none=True)
         total_loss = torch.tensor(0.0, device=device)
 
-        # Process each batch and then collect the results we pass to the optimizer
-        for batch in data_loader:
+        for batch in batch_iter:
             batch = batch.to(device)
             batch_dict = batch.to_dict()
             output = model(
@@ -505,28 +488,9 @@ def take_step_lbfgs(
         if max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
-        if distributed:
-            torch.distributed.all_reduce(total_loss, op=torch.distributed.ReduceOp.SUM)
         return total_loss
 
-    if distributed:
-        if rank == 0:
-            loss = optimizer.step(closure)
-            signal.fill_(0)
-            torch.distributed.broadcast(signal, src=0)
-        else:
-            while True:
-                # Other ranks wait for signals from rank 0
-                torch.distributed.broadcast(signal, src=0)
-                if signal.item() == 0:
-                    break
-                if signal.item() == 1:
-                    loss = closure()
-
-        for param in model.parameters():
-            torch.distributed.broadcast(param.data, src=0)
-    else:
-        loss = optimizer.step(closure)
+    loss = optimizer.step(closure)
 
     if ema is not None:
         ema.update()
@@ -536,7 +500,7 @@ def take_step_lbfgs(
         "time": time.time() - start_time,
     }
 
-    return loss, loss_dict
+    return loss, loss_dict, int(total_sample_count)
 
 # Keep parameters frozen/active after evaluation
 @contextmanager

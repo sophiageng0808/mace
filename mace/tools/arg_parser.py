@@ -75,18 +75,6 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         choices=["float32", "float64"],
         default="float64",
     )
-    parser.add_argument(
-        "--distributed",
-        help="train in multi-GPU data parallel mode",
-        action="store_true",
-        default=False,
-    )
-    parser.add_argument(
-        "--launcher",
-        default="slurm",
-        choices=["slurm", "torchrun", "mpi", "none"],
-        help="How the job was launched",
-    )
     parser.add_argument("--log_level", help="log level", type=str, default="INFO")
 
     parser.add_argument(
@@ -827,7 +815,19 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--batch_size", help="batch size", type=int, default=10)
     parser.add_argument(
+        "--max_samples_per_epoch",
+        type=int,
+        default=20000,
+    )
+    parser.add_argument(
         "--valid_batch_size", help="Validation batch size", type=int, default=10
+    )
+    parser.add_argument(
+        "--max_val_samples",
+        help="Use at most this many validation structures (random subset, seeded by --seed). "
+        "0 = use the full validation set.",
+        type=int,
+        default=10000,
     )
     parser.add_argument(
         "--lr", help="Learning rate of optimizer", type=float, default=0.01
@@ -1040,6 +1040,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "swa_lr",
             "weight_decay",
             "batch_size",
+            "max_samples_per_epoch",
+            "max_val_samples",
             "max_num_epochs",
             "start_swa",
             "energy_weight",

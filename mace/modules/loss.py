@@ -7,39 +7,13 @@
 from typing import Optional
 
 import torch
-import torch.distributed as dist
 
 from mace.tools import TensorDict
 from mace.tools.torch_geometric import Batch
 
 
-# ------------------------------------------------------------------------------
-# Helper function for loss reduction that handles DDP correction
-# ------------------------------------------------------------------------------
-def is_ddp_enabled():
-    return dist.is_initialized() and dist.get_world_size() > 1
-
-
 def reduce_loss(raw_loss: torch.Tensor, ddp: Optional[bool] = None) -> torch.Tensor:
-    """
-    Reduces an element-wise loss tensor.
-
-    If ddp is True and distributed is initialized, the function computes:
-
-        loss = (local_sum * world_size) / global_num_elements
-
-    Otherwise, it returns the regular mean.
-    """
-    ddp = is_ddp_enabled() if ddp is None else ddp
-    if ddp and dist.is_initialized():
-        world_size = dist.get_world_size()
-        n_local = raw_loss.numel()
-        loss_sum = raw_loss.sum()
-        total_samples = torch.tensor(
-            n_local, device=raw_loss.device, dtype=raw_loss.dtype
-        )
-        dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
-        return loss_sum * world_size / total_samples
+    _ = ddp  # unused; kept for call-site compatibility
     return raw_loss.mean()
 
 

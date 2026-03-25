@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import torch.distributed
 from torchmetrics import Metric
 
 from mace.tools.utils import filter_nonzero_weight
@@ -118,7 +117,6 @@ class TrainingPlotter:
         output_args: str,
         device: str,
         plot_frequency: int,
-        distributed: bool = False,
         swa_start: Optional[int] = None,
         plot_interaction_e: bool = False,
     ):
@@ -130,27 +128,19 @@ class TrainingPlotter:
         self.output_args = output_args
         self.device = device
         self.plot_frequency = plot_frequency
-        self.distributed = distributed
         self.swa_start = swa_start
         self.plot_interaction_e = plot_interaction_e
 
-    def plot(self, model_epoch: str, model: torch.nn.Module, rank: int) -> None:
-
-        # All ranks process data through model_inference
+    def plot(self, model_epoch: str, model: torch.nn.Module) -> None:
         train_valid_dict = model_inference(
             self.train_valid_data,
             model,
             self.output_args,
             self.device,
-            self.distributed,
         )
         test_dict = model_inference(
-            self.test_data, model, self.output_args, self.device, self.distributed
+            self.test_data, model, self.output_args, self.device
         )
-
-        # Only rank 0 creates and saves plots
-        if rank != 0:
-            return
 
         data = pd.DataFrame(
             results for results in parse_training_results(self.results_dir)
@@ -463,7 +453,6 @@ def model_inference(
     model: torch.nn.Module,
     output_args: Dict[str, bool],
     device: str,
-    distributed: bool = False,
 ):
 
     for param in model.parameters():
@@ -488,9 +477,6 @@ def model_inference(
             )
 
             results = scatter_metric(batch, output)
-
-        if distributed:
-            torch.distributed.barrier()
 
         results = scatter_metric.compute()
         results_dict[name] = results

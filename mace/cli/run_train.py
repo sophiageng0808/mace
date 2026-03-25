@@ -13,11 +13,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import List, Optional
 
-import torch.distributed
 from e3nn.util import jit
-from torch.nn.parallel import DistributedDataParallel as DDP
+import torch
 from torch.optim import LBFGS
-from torch.utils.data import ConcatDataset
+from torch.utils.data import ConcatDataset, Subset
 from torch_ema import ExponentialMovingAverage
 
 import mace
@@ -35,7 +34,6 @@ from mace.cli.convert_oeq_e3nn import run as run_oeq_to_e3nn
 from mace.cli.visualise_train import TrainingPlotter
 from mace.data import KeySpecification, update_keyspec_from_kwargs
 from mace.tools import torch_geometric
-from mace.tools.distributed_tools import init_distributed
 from mace.tools.lora_tools import inject_LoRAs
 from mace.tools.model_script_utils import configure_model
 from mace.tools.multihead_tools import (
@@ -103,22 +101,12 @@ def run(args) -> None:
             raise ImportError(
                 "Error: Intel extension for PyTorch not found, but XPU device was specified"
             ) from e
-    rank, local_rank, world_size = init_distributed(args)
-
     # Setup
     tools.set_seeds(args.seed)
-    tools.setup_logger(level=args.log_level, tag=tag, directory=args.log_dir, rank=rank)
+    tools.setup_logger(level=args.log_level, tag=tag, directory=args.log_dir, rank=0)
     logging.info("===========VERIFYING SETTINGS===========")
     for message, loglevel in input_log_messages:
         logging.log(level=loglevel, msg=message)
-
-    if args.distributed:
-        if args.device == "cuda":
-            torch.cuda.set_device(local_rank)
-        elif args.device == "xpu":
-            torch.xpu.set_device(local_rank)
-        logging.info(f"Process group initialized: {torch.distributed.is_initialized()}")
-        logging.info(f"Processes: {world_size}")
 
     try:
         logging.info(f"MACE version: {mace.__version__}")
@@ -652,34 +640,11 @@ def run(args) -> None:
 
     # concatenate all the trainsets
     train_set = ConcatDataset([train_sets[head] for head in heads])
-    train_sampler, valid_sampler = None, None
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(
-            train_set,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True,
-            drop_last=(not args.lbfgs),
-            seed=args.seed,
-        )
-        valid_samplers = {}
-        for head, valid_set in valid_sets.items():
-            valid_sampler = torch.utils.data.distributed.DistributedSampler(
-                valid_set,
-                num_replicas=world_size,
-                rank=rank,
-                shuffle=True,
-                drop_last=True,
-                seed=args.seed,
-            )
-            valid_samplers[head] = valid_sampler
-
     train_loader = torch_geometric.dataloader.DataLoader(
         dataset=train_set,
         batch_size=args.batch_size,
-        sampler=train_sampler,
-        shuffle=(train_sampler is None),
-        drop_last=(train_sampler is None and not args.lbfgs),
+        shuffle=True,
+        drop_last=(not args.lbfgs),
         pin_memory=args.pin_memory,
         num_workers=args.num_workers,
         generator=torch.Generator().manual_seed(args.seed),
@@ -689,10 +654,16 @@ def run(args) -> None:
     if not isinstance(valid_sets, dict):
         valid_sets = {"Default": valid_sets}
     for head, valid_set in valid_sets.items():
+        vs = valid_set
+        n_val = len(vs)
+        cap = args.max_val_samples if args.max_val_samples else 0
+        if cap > 0 and n_val > cap:
+            g = torch.Generator().manual_seed(int(args.seed))
+            idx = torch.randperm(n_val, generator=g)[:cap].tolist()
+            vs = Subset(vs, idx)
         valid_loaders[head] = torch_geometric.dataloader.DataLoader(
-            dataset=valid_set,
+            dataset=vs,
             batch_size=args.valid_batch_size,
-            sampler=valid_samplers[head] if args.distributed else None,
             shuffle=False,
             drop_last=False,
             pin_memory=args.pin_memory,
@@ -834,11 +805,6 @@ def run(args) -> None:
 
     if args.wandb:
         setup_wandb(args)
-    if args.distributed:
-        distributed_model = DDP(model, device_ids=[local_rank])
-    else:
-        distributed_model = None
-
 
     train_valid_data_loader = {}
     for head_config in head_configs:
@@ -859,7 +825,6 @@ def run(args) -> None:
                 output_args=output_args,
                 device=device,
                 plot_frequency=args.plot_frequency,
-                distributed=args.distributed,
                 swa_start=swa.start if swa else None,
                 plot_interaction_e=args.plot_interaction_e
                 )
@@ -902,11 +867,9 @@ def run(args) -> None:
         max_grad_norm=args.clip_grad,
         log_errors=args.error_table,
         log_wandb=args.wandb,
-        distributed=args.distributed,
-        distributed_model=distributed_model,
         plotter=plotter,
-        train_sampler=train_sampler,
-        rank=rank,
+        max_samples_per_epoch=args.max_samples_per_epoch,
+        train_shuffle_seed=args.seed,
     )
 
     logging.info("")
@@ -957,16 +920,6 @@ def run(args) -> None:
                         folder, r_max=args.r_max, z_table=z_table, heads=heads, head=head_config.head_name
                     )
         for test_name, test_set in test_sets.items():
-            test_sampler = None
-            if args.distributed:
-                test_sampler = torch.utils.data.distributed.DistributedSampler(
-                    test_set,
-                    num_replicas=world_size,
-                    rank=rank,
-                    shuffle=True,
-                    drop_last=True,
-                    seed=args.seed,
-                )
             try:
                 drop_last = test_set.drop_last
             except AttributeError as e:  # pylint: disable=W0612
@@ -974,7 +927,7 @@ def run(args) -> None:
             test_loader = torch_geometric.dataloader.DataLoader(
                 test_set,
                 batch_size=args.valid_batch_size,
-                shuffle=(test_sampler is None),
+                shuffle=True,
                 drop_last=drop_last,
                 num_workers=args.num_workers,
                 pin_memory=args.pin_memory,
@@ -990,74 +943,67 @@ def run(args) -> None:
             device=device,
         )
         model.to(device)
-        if args.distributed:
-            # re-enable gradients for distributed model for evaluation of stage-two model
-            # after param.requires_grad = False was called before evaluating stage-one model
-            for param in model.parameters():
-                param.requires_grad = True
-            distributed_model = DDP(model, device_ids=[local_rank])
-        model_to_evaluate = model if not args.distributed else distributed_model
+        model_to_evaluate = model
         if swa_eval:
             logging.info(f"Loaded Stage two model from epoch {epoch} for evaluation")
         else:
             logging.info(f"Loaded Stage one model from epoch {epoch} for evaluation")
 
-        if rank == 0:
-            # Save entire model
-            if swa_eval:
-                model_path = Path(args.checkpoints_dir) / (tag + "_stagetwo.model")
-            else:
-                model_path = Path(args.checkpoints_dir) / (tag + ".model")
-            logging.info(f"Saving model to {model_path}")
-            model_to_save = deepcopy(model)
-            if args.enable_cueq and not args.only_cueq:
-                logging.info("RUNING CUEQ TO E3NN")
-                model_to_save = run_cueq_to_e3nn(deepcopy(model), device=device)
-            if args.enable_oeq:
-                logging.info("RUNING OEQ TO E3NN")
-                model_to_save = run_oeq_to_e3nn(deepcopy(model), device=device)
-            if args.save_cpu:
-                model_to_save = model_to_save.to("cpu")
-            torch.save(model_to_save, model_path)
-            extra_files = {
-                "commit.txt": commit.encode("utf-8") if commit is not None else b"",
-                "config.yaml": json.dumps(
-                    convert_to_json_format(extract_config_mace_model(model))
-                ),
-            }
-            os.makedirs(args.model_dir, exist_ok=True)
-            if swa_eval:
-                torch.save(
-                    model_to_save, Path(args.model_dir) / (args.name + "_stagetwo.model")
+        # Save entire model
+        if swa_eval:
+            model_path = Path(args.checkpoints_dir) / (tag + "_stagetwo.model")
+        else:
+            model_path = Path(args.checkpoints_dir) / (tag + ".model")
+        logging.info(f"Saving model to {model_path}")
+        model_to_save = deepcopy(model)
+        if args.enable_cueq and not args.only_cueq:
+            logging.info("RUNING CUEQ TO E3NN")
+            model_to_save = run_cueq_to_e3nn(deepcopy(model), device=device)
+        if args.enable_oeq:
+            logging.info("RUNING OEQ TO E3NN")
+            model_to_save = run_oeq_to_e3nn(deepcopy(model), device=device)
+        if args.save_cpu:
+            model_to_save = model_to_save.to("cpu")
+        torch.save(model_to_save, model_path)
+        extra_files = {
+            "commit.txt": commit.encode("utf-8") if commit is not None else b"",
+            "config.yaml": json.dumps(
+                convert_to_json_format(extract_config_mace_model(model))
+            ),
+        }
+        os.makedirs(args.model_dir, exist_ok=True)
+        if swa_eval:
+            torch.save(
+                model_to_save, Path(args.model_dir) / (args.name + "_stagetwo.model")
+            )
+            try:
+                path_complied = Path(args.model_dir) / (
+                    args.name + "_stagetwo_compiled.model"
                 )
-                try:
-                    path_complied = Path(args.model_dir) / (
-                        args.name + "_stagetwo_compiled.model"
-                    )
-                    logging.info(f"Compiling model, saving metadata {path_complied}")
-                    model_compiled = jit.compile(deepcopy(model_to_save))
-                    torch.jit.save(
-                        model_compiled,
-                        path_complied,
-                        _extra_files=extra_files,
-                    )
-                except Exception as e:  # pylint: disable=W0718
-                    pass
-            else:
-                torch.save(model_to_save, Path(args.model_dir) / (args.name + ".model"))
-                try:
-                    path_complied = Path(args.model_dir) / (
-                        args.name + "_compiled.model"
-                    )
-                    logging.info(f"Compiling model, saving metadata to {path_complied}")
-                    model_compiled = jit.compile(deepcopy(model_to_save))
-                    torch.jit.save(
-                        model_compiled,
-                        path_complied,
-                        _extra_files=extra_files,
-                    )
-                except Exception as e:  # pylint: disable=W0718
-                    pass
+                logging.info(f"Compiling model, saving metadata {path_complied}")
+                model_compiled = jit.compile(deepcopy(model_to_save))
+                torch.jit.save(
+                    model_compiled,
+                    path_complied,
+                    _extra_files=extra_files,
+                )
+            except Exception as e:  # pylint: disable=W0718
+                pass
+        else:
+            torch.save(model_to_save, Path(args.model_dir) / (args.name + ".model"))
+            try:
+                path_complied = Path(args.model_dir) / (
+                    args.name + "_compiled.model"
+                )
+                logging.info(f"Compiling model, saving metadata to {path_complied}")
+                model_compiled = jit.compile(deepcopy(model_to_save))
+                torch.jit.save(
+                    model_compiled,
+                    path_complied,
+                    _extra_files=extra_files,
+                )
+            except Exception as e:  # pylint: disable=W0718
+                pass
 
         logging.info("Computing metrics for training, validation, and test sets")
         for param in model.parameters():
@@ -1073,7 +1019,6 @@ def run(args) -> None:
             output_args=output_args,
             log_wandb=args.wandb,
             device=device,
-            distributed=args.distributed,
             skip_heads=skip_heads,
         )
         logging.info("Error-table on TRAIN and VALID:\n" + str(table_train_valid))
@@ -1087,7 +1032,6 @@ def run(args) -> None:
                 output_args=output_args,
                 log_wandb=args.wandb,
                 device=device,
-                distributed=args.distributed,
             )
             logging.info("Error-table on TEST:\n" + str(table_test))
         if args.plot:
@@ -1101,19 +1045,13 @@ def run(args) -> None:
                     output_args=output_args,
                     device=device,
                     plot_frequency=args.plot_frequency,
-                    distributed=args.distributed,
                     swa_start=swa.start if swa else None
                 )
-                plotter.plot(epoch, model_to_evaluate, rank)
+                plotter.plot(epoch, model_to_evaluate)
             except Exception as e:  # pylint: disable=W0718
                 logging.debug(f"Plotting failed: {e}")
 
-        if args.distributed:
-            torch.distributed.barrier()
-
     logging.info("Done")
-    if args.distributed:
-        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
