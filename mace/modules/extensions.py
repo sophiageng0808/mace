@@ -4,7 +4,11 @@ import torch
 from e3nn.util.jit import compile_mode
 
 from mace.modules.blocks import LinearReadoutBlock, NonLinearReadoutBlock
-from mace.modules.models import ScaleShiftMACE, _FORWARD_OUTPUT_CLAMP
+from mace.modules.models import (
+    ScaleShiftMACE,
+    _FORWARD_OUTPUT_CLAMP,
+    _mlip_pair_decomposition,
+)
 from mace.modules.utils import get_atomic_virials_stresses, get_outputs, prepare_graph
 from mace.modules.wrapper_ops import CuEquivarianceConfig
 from mace.tools.scatter import scatter_sum
@@ -82,6 +86,7 @@ class MACELES(ScaleShiftMACE):
         compute_atomic_stresses: bool = False,
         lammps_mliap: bool = False,
         compute_bec: bool = False,
+        return_mlip_pair_decomposition: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         ctx = prepare_graph(
             data,
@@ -270,6 +275,24 @@ class MACELES(ScaleShiftMACE):
             compute_edge_forces=compute_edge_forces,
         )
 
+        mlip_pair_decomposition: Optional[Dict[str, Optional[torch.Tensor]]] = None
+        if return_mlip_pair_decomposition:
+            pair_g = scatter_sum(
+                pair_node_energy, data["batch"], dim=0, dim_size=num_graphs
+            )
+            mlip_pair_decomposition = _mlip_pair_decomposition(
+                total_energy,
+                pair_g,
+                positions,
+                forces,
+                compute_force=compute_force,
+                training=training,
+                compute_virials=compute_virials,
+                compute_stress=compute_stress,
+                compute_hessian=compute_hessian,
+                compute_edge_forces=compute_edge_forces,
+            )
+
         # Match MACE output sanitization: finite box on reported totals and forces.
         cv = _FORWARD_OUTPUT_CLAMP
         total_energy = torch.nan_to_num(
@@ -293,7 +316,7 @@ class MACELES(ScaleShiftMACE):
                 batch=data["batch"],
                 cell=cell,
             )
-        return {
+        out_les: Dict[str, Optional[torch.Tensor]] = {
             "energy": total_energy,
             "node_energy": node_energy,
             "forces": forces,
@@ -309,3 +332,6 @@ class MACELES(ScaleShiftMACE):
             "latent_charges": les_q,
             "BEC": les_result["BEC"],
         }
+        if mlip_pair_decomposition is not None:
+            out_les["mlip_pair_decomposition"] = mlip_pair_decomposition  # type: ignore[assignment]
+        return out_les

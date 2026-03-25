@@ -10,44 +10,24 @@
 set -euo pipefail
 mkdir -p outslurm
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUBMIT_DIR="${SLURM_SUBMIT_DIR:-}"
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+MACE="${BASE_REPO:-/scratch/$USER/mace}"
+WT="${REPULSION_WT:-${SLURM_SUBMIT_DIR:-$ROOT}}"
+G="${GROUP_NAME:-r12_zbl}"
 
-if [ -d "/scratch/$USER/mace" ]; then
-  DEFAULT_BASE="/scratch/$USER/mace"
-else
-  DEFAULT_BASE="$SCRIPT_DIR"
-fi
+N=$SLURM_CPUS_PER_TASK
+export OMP_NUM_THREADS=$N MKL_NUM_THREADS=$N OPENBLAS_NUM_THREADS=$N \
+  NUMEXPR_NUM_THREADS=$N VECLIB_MAXIMUM_THREADS=$N BLIS_NUM_THREADS=$N
 
-BASE_REPO="${BASE_REPO:-$DEFAULT_BASE}"
-REPULSION_WT="${REPULSION_WT:-${SUBMIT_DIR:-$SCRIPT_DIR}}"
-VENV_ACTIVATE="$BASE_REPO/.macevenv/bin/activate"
+C="/scratch/$USER/.cache"
+mkdir -p "$C/wandb" "$C/torch/kernels"
+export WANDB_CACHE_DIR="$C/wandb" PYTORCH_KERNEL_CACHE_PATH="$C/torch/kernels"
 
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export OPENBLAS_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export NUMEXPR_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export VECLIB_MAXIMUM_THREADS=$SLURM_CPUS_PER_TASK
-export BLIS_NUM_THREADS=$SLURM_CPUS_PER_TASK
+source "$MACE/.macevenv/bin/activate"
+export PYTHONNOUSERSITE=1 PYTHONPATH="$WT${PYTHONPATH:+:$PYTHONPATH}"
+export WANDB_MODE="${WANDB_MODE:-offline}" WANDB_DISABLED="${WANDB_DISABLED:-false}"
 
-# Use scratch for caches (home may be read-only on compute nodes)
-CACHE_BASE="/scratch/$USER/.cache"
-mkdir -p "$CACHE_BASE/wandb" "$CACHE_BASE/torch/kernels"
-export WANDB_CACHE_DIR="$CACHE_BASE/wandb"
-export PYTORCH_KERNEL_CACHE_PATH="$CACHE_BASE/torch/kernels"
-
-source "$VENV_ACTIVATE"
-export PYTHONNOUSERSITE=1
-export PYTHONPATH="$REPULSION_WT${PYTHONPATH:+:$PYTHONPATH}"
-export WANDB_MODE="${WANDB_MODE:-offline}"
-export WANDB_DISABLED="${WANDB_DISABLED:-false}"
-
-cd "$REPULSION_WT"
-
-GROUP_NAME="${GROUP_NAME:-r12_zbl}"
-RUN_NAME="${RUN_NAME:-slurm_${SLURM_JOB_ID:-manual}}"
-python dissociation_scan_overfit100_repulsion.py \
-  --run_name "$RUN_NAME" \
-  --group "$GROUP_NAME"
-
-echo "outputs: /scratch/$USER/mace/outputs/dissociation_scans_overfit100/${GROUP_NAME}/${RUN_NAME}/"
+cd "$WT"
+RUN="${RUN_NAME:-slurm_${SLURM_JOB_ID:-manual}}"
+python dissociation_scan_overfit100_repulsion.py --run_name "$RUN" --group "$G"
+echo "outputs: $MACE/outputs/dissociation_scans_overfit100/$G/$RUN/"

@@ -34,6 +34,7 @@ from .utils import (
     compute_dielectric_gradients,
     compute_fixed_charge_dipole,
     compute_fixed_charge_dipole_polar,
+    compute_forces,
     get_atomic_virials_stresses,
     get_edge_vectors_and_lengths,
     get_outputs,
@@ -43,6 +44,49 @@ from .utils import (
 
 # After autograd, clamp reported energies/forces so loggers and downstream code never see huge non-finite spikes.
 _FORWARD_OUTPUT_CLAMP = 1.0e6
+
+
+def _mlip_pair_decomposition(
+    total_energy: torch.Tensor,
+    pair_graph_energy: torch.Tensor,
+    positions: torch.Tensor,
+    forces: Optional[torch.Tensor],
+    *,
+    compute_force: bool,
+    training: bool,
+    compute_virials: bool,
+    compute_stress: bool,
+    compute_hessian: bool,
+    compute_edge_forces: bool,
+) -> Dict[str, Optional[torch.Tensor]]:
+    """Detached graph energies and per-term forces (pair = ZBL or r^-12); forces only if isotropic force path."""
+    energy_mlip = (total_energy - pair_graph_energy).detach()
+    energy_pair = pair_graph_energy.detach()
+    grad_training = training or compute_hessian or compute_edge_forces
+    can_split = (
+        compute_force
+        and forces is not None
+        and not compute_virials
+        and not compute_stress
+        and not compute_hessian
+    )
+    if not can_split:
+        return {
+            "energy_mlip": energy_mlip,
+            "energy_pair": energy_pair,
+            "forces_mlip": None,
+            "forces_pair": None,
+        }
+    f_pair = compute_forces(
+        pair_graph_energy, positions, training=grad_training
+    )
+    f_mlip = forces - f_pair
+    return {
+        "energy_mlip": energy_mlip,
+        "energy_pair": energy_pair,
+        "forces_mlip": f_mlip.detach(),
+        "forces_pair": f_pair.detach(),
+    }
 
 
 @compile_mode("script")
@@ -304,6 +348,7 @@ class MACE(torch.nn.Module):
         compute_edge_forces: bool = False,
         compute_atomic_stresses: bool = False,
         lammps_mliap: bool = False,
+        return_mlip_pair_decomposition: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         # Setup
         ctx = prepare_graph(
@@ -444,6 +489,21 @@ class MACE(torch.nn.Module):
             compute_edge_forces=compute_edge_forces,
         )
 
+        mlip_pair_decomposition: Optional[Dict[str, Optional[torch.Tensor]]] = None
+        if return_mlip_pair_decomposition:
+            mlip_pair_decomposition = _mlip_pair_decomposition(
+                total_energy,
+                pair_energy,
+                positions,
+                forces,
+                compute_force=compute_force,
+                training=training,
+                compute_virials=compute_virials,
+                compute_stress=compute_stress,
+                compute_hessian=compute_hessian,
+                compute_edge_forces=compute_edge_forces,
+            )
+
         # nan_to_num + clamp on tensors returned to training / logs (after get_outputs built forces).
         cv = _FORWARD_OUTPUT_CLAMP
         total_energy = torch.nan_to_num(
@@ -467,7 +527,7 @@ class MACE(torch.nn.Module):
                 batch=data["batch"],
                 cell=cell,
             )
-        return {
+        out: Dict[str, Optional[torch.Tensor]] = {
             "energy": total_energy,
             "node_energy": node_energy,
             "contributions": contributions,
@@ -481,6 +541,9 @@ class MACE(torch.nn.Module):
             "hessian": hessian,
             "node_feats": node_feats_out,
         }
+        if mlip_pair_decomposition is not None:
+            out["mlip_pair_decomposition"] = mlip_pair_decomposition  # type: ignore[assignment]
+        return out
 
 
 @compile_mode("script")
@@ -508,6 +571,7 @@ class ScaleShiftMACE(MACE):
         compute_edge_forces: bool = False,
         compute_atomic_stresses: bool = False,
         lammps_mliap: bool = False,
+        return_mlip_pair_decomposition: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         # Setup
         ctx = prepare_graph(
@@ -668,6 +732,24 @@ class ScaleShiftMACE(MACE):
             compute_edge_forces=compute_edge_forces or compute_atomic_stresses,
         )
 
+        mlip_pair_decomposition: Optional[Dict[str, Optional[torch.Tensor]]] = None
+        if return_mlip_pair_decomposition:
+            pair_g = scatter_sum(
+                pair_node_energy, data["batch"], dim=0, dim_size=num_graphs
+            )
+            mlip_pair_decomposition = _mlip_pair_decomposition(
+                total_energy,
+                pair_g,
+                positions,
+                forces,
+                compute_force=compute_force,
+                training=training,
+                compute_virials=compute_virials,
+                compute_stress=compute_stress,
+                compute_hessian=compute_hessian,
+                compute_edge_forces=compute_edge_forces or compute_atomic_stresses,
+            )
+
         atomic_virials: Optional[torch.Tensor] = None
         atomic_stresses: Optional[torch.Tensor] = None
         if compute_atomic_stresses and edge_forces is not None:
@@ -679,7 +761,7 @@ class ScaleShiftMACE(MACE):
                 batch=data["batch"],
                 cell=cell,
             )
-        return {
+        out_ss: Dict[str, Optional[torch.Tensor]] = {
             "energy": total_energy,
             "node_energy": node_energy,
             "interaction_energy": inter_e,
@@ -693,6 +775,9 @@ class ScaleShiftMACE(MACE):
             "displacement": displacement,
             "node_feats": node_feats_out,
         }
+        if mlip_pair_decomposition is not None:
+            out_ss["mlip_pair_decomposition"] = mlip_pair_decomposition  # type: ignore[assignment]
+        return out_ss
 
 
 @compile_mode("script")

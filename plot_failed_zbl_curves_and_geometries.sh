@@ -11,40 +11,24 @@
 set -euo pipefail
 mkdir -p outslurm
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_REPO="${BASE_REPO:-/scratch/$USER/mace}"
-REPULSION_WT="${REPULSION_WT:-$SCRIPT_DIR}"
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+MACE="${BASE_REPO:-/scratch/$USER/mace}"
+RUN="${DISSOC_RUN:-$MACE/outputs/dissociation_scans_overfit100/repulsion/slurm_358187/zbl}"
 
-FAILED_CSV="${FAILED_CSV:-$BASE_REPO/outputs/dissociation_scans_overfit100/repulsion/slurm_358187/zbl/failed_curves_metrics.csv}"
+FAILED_CSV="${FAILED_CSV:-$RUN/failed_curves_metrics.csv}"
 MODEL_PATH="${MODEL_PATH:-/scratch/$USER/mace_worktrees/jobs_repulsion/train4m_multiday_1_repulsion_zbl/repulsion_zbl.model}"
-DATA_EXTXYZ="${DATA_EXTXYZ:-$BASE_REPO/data/train4M_split_25k/test.extxyz}"
-OUT_DIR="${OUT_DIR:-$BASE_REPO/outputs/dissociation_scans_overfit100/repulsion/slurm_358187/zbl}"
+H5_DIR="${H5_DIR:-$MACE/data/train4M_h5/test}"
+OUT_DIR="${OUT_DIR:-$RUN}"
 
-VENV_ACTIVATE="$BASE_REPO/.macevenv/bin/activate"
+N=$SLURM_CPUS_PER_TASK
+export OMP_NUM_THREADS=$N MKL_NUM_THREADS=$N OPENBLAS_NUM_THREADS=$N \
+  NUMEXPR_NUM_THREADS=$N VECLIB_MAXIMUM_THREADS=$N BLIS_NUM_THREADS=$N TORCH_NUM_THREADS=$N
+export MPLBACKEND=Agg MPLCONFIGDIR=/tmp/mplconfig
 
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export VECLIB_MAXIMUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export BLIS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-
-export TORCH_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export MPLBACKEND="Agg"
-export MPLCONFIGDIR="/tmp/mplconfig"
-
-source "$VENV_ACTIVATE"
-export PYTHONPATH="$REPULSION_WT${PYTHONPATH:+:$PYTHONPATH}"
-
-cd "$REPULSION_WT"
+source "$MACE/.macevenv/bin/activate"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+cd "$ROOT"
 
 python plot_failed_zbl_curves_and_geometries.py \
-  --failed_csv "$FAILED_CSV" \
-  --model "$MODEL_PATH" \
-  --data_extxyz "$DATA_EXTXYZ" \
-  --steps 50 \
-  --start 0.7 \
-  --end 0.2 \
-  --scale linear \
-  --device cuda \
-  --out_dir "$OUT_DIR"
+  --failed_csv "$FAILED_CSV" --model "$MODEL_PATH" --h5_dir "$H5_DIR" \
+  --out_dir "$OUT_DIR" --device cuda

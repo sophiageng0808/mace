@@ -6,11 +6,10 @@ from pathlib import Path
 from datetime import datetime
 
 import numpy as np
-import pandas as pd
 import torch
 
 import wandb
-import mace.modules.repulsion  # noqa: F401
+import mace.modules.repulsion
 
 # -----------------------------
 # Config (dataset + scan)
@@ -117,7 +116,6 @@ def load_frames_from_h5(h5_dir: str) -> list:
                     frames.append(atoms)
     return frames
 
-
 def ensure_csv(path: Path, header):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -213,29 +211,29 @@ def ensure_pair_repulsion_buffers(calc):
             alpha = torch.tensor(4.0, dtype=torch.get_default_dtype())
             pr.register_buffer("alpha", alpha)
 
-def get_r12_min_distance(calc):
+
+def _pair_repulsion_r_min(calc, submodule: str):
+    """Return r_min from the pair-repulsion r12 or zbl block (submodule name) if present."""
     for model in getattr(calc, "models", []):
         pr = getattr(model, "pair_repulsion_fn", None)
         if pr is None:
             continue
-        r12 = getattr(pr, "r12", None)
-        if r12 is None:
+        sub = getattr(pr, submodule, None)
+        if sub is None:
             continue
-        if hasattr(r12, "r_min"):
-            return float(r12.r_min)
+        if hasattr(sub, "r_min"):
+            return float(sub.r_min)
     return None
 
-def get_zbl_min_distance(calc):
-    for model in getattr(calc, "models", []):
-        pr = getattr(model, "pair_repulsion_fn", None)
-        if pr is None:
-            continue
-        zbl = getattr(pr, "zbl", None)
-        if zbl is None:
-            continue
-        if hasattr(zbl, "r_min"):
-            return float(zbl.r_min)
-    return None
+
+def _distance_grid_with_floor(dist, r_min, eps=1e-3):
+    """Raise distances below r_min + eps when the grid would otherwise violate the floor."""
+    if r_min is None:
+        return dist
+    min_dist = r_min + eps
+    if np.min(dist) > min_dist:
+        return dist
+    return np.maximum(dist, min_dist)
 
 def run_scan(
     atoms, i, j, calc,
@@ -463,7 +461,6 @@ if __name__ == "__main__":
         ensure_csv(failed_csv, CSV_HEADER)
         per_model_csv[model_name] = (all_csv, failed_csv)
 
-
     per_model_acc = {
         model_name: {
             "n": 0,
@@ -501,17 +498,9 @@ if __name__ == "__main__":
         for model_name, calc in calc_map.items():
             dist_model = dist
             if "r12" in model_name:
-                r12_min = get_r12_min_distance(calc)
-                if r12_min is not None:
-                    min_dist = r12_min + 1e-3
-                    if np.min(dist_model) <= min_dist:
-                        dist_model = np.maximum(dist_model, min_dist)
+                dist_model = _distance_grid_with_floor(dist_model, _pair_repulsion_r_min(calc, "r12"))
             if "zbl" in model_name:
-                zbl_min = get_zbl_min_distance(calc)
-                if zbl_min is not None:
-                    min_dist = zbl_min + 1e-3
-                    if np.min(dist_model) <= min_dist:
-                        dist_model = np.maximum(dist_model, min_dist)
+                dist_model = _distance_grid_with_floor(dist_model, _pair_repulsion_r_min(calc, "zbl"))
             metrics = run_scan(
                 at, i, j, calc,
                 model_name=model_name,
