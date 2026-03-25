@@ -508,12 +508,16 @@ class PairRepulsionSwitch(torch.nn.Module):
             r_max=r_max,
         )
         n_nodes = node_attrs.shape[0]
-        # Neighbor lists are bidirectional; keep 1/2 factor in sync with ZBLRepulsion/R12Repulsion.
+        # Match the leaf module: bidirectional neighbor lists use assume_directed_double=True by default.
+        if self.kinds[0] == "zbl":
+            assume_directed_double = self.zbl.assume_directed_double
+        else:
+            assume_directed_double = self.r12.assume_directed_double
         return _split_edge_energy_to_nodes(
             V_edge=V_edge,
             edge_index=edge_index,
             n_nodes=n_nodes,
-            assume_directed_double=True,
+            assume_directed_double=assume_directed_double,
         )
 
     def edge_energy(

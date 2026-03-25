@@ -30,12 +30,12 @@ CLAMP_THRESHOLD = 9.9e5
 # -----------------------------
 # Repulsion models (ABSOLUTE PATHS)
 # -----------------------------
-JOBS_ROOT = Path(f"/scratch/{USER}/mace_worktrees/jobs_repulsion")
+RUNS_ROOT = Path(os.environ.get("RUNS_ROOT", f"/scratch/{USER}/mace_worktrees/jobs_repulsion"))
 REPULSION_MODELS = [
-    ("r12 scale 1.0", str(JOBS_ROOT / "train4M_lr0.01_ep200_samp20000_val20000_r121.0/repulsion_r12.model")),
-    ("r12 scale 0.1", str(JOBS_ROOT / "train4M_lr0.01_ep200_samp20000_val20000_r120.1/repulsion_r12.model")),
-    ("zbl scale 1.0", str(JOBS_ROOT / "train4M_lr0.01_ep200_samp20000_val20000_zbl1.0/checkpoints/repulsion_zbl_run-0_epoch-6.model")),
-    ("zbl scale 0.1", str(JOBS_ROOT / "train4M_lr0.01_ep200_samp20000_val20000_zbl0.1/checkpoints/repulsion_zbl_run-0_epoch-24.model")),
+    ("r12 scale 1.0", str(RUNS_ROOT / "r12_1.0" / "repulsion_r12_1.0.model")),
+    ("r12 scale 0.1", str(RUNS_ROOT / "r12_0.1" / "repulsion_r12_0.1.model")),
+    ("zbl scale 1.0", str(RUNS_ROOT / "zbl_1.0" / "repulsion_zbl_1.0.model")),
+    ("zbl scale 0.1", str(RUNS_ROOT / "zbl_0.1" / "repulsion_zbl_0.1.model")),
 ]
 
 # -----------------------------
@@ -192,24 +192,7 @@ def load_mace_calculator(model_path: str, device: str):
         device=device,
         default_dtype="float64",
     )
-    ensure_pair_repulsion_buffers(calc)
     return calc
-
-def ensure_pair_repulsion_buffers(calc):
-    import ase.data
-    for model in getattr(calc, "models", []):
-        pr = getattr(model, "pair_repulsion_fn", None)
-        if pr is None:
-            continue
-        if not hasattr(pr, "covalent_radii"):
-            covalent = torch.tensor(
-                ase.data.covalent_radii,
-                dtype=torch.get_default_dtype(),
-            )
-            pr.register_buffer("covalent_radii", covalent)
-        if not hasattr(pr, "alpha"):
-            alpha = torch.tensor(4.0, dtype=torch.get_default_dtype())
-            pr.register_buffer("alpha", alpha)
 
 
 def _pair_repulsion_r_min(calc, submodule: str):

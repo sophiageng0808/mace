@@ -77,27 +77,12 @@ def mol_label_to_index(mol_label: str) -> int:
     raise ValueError(f"Unexpected molecule label: {mol_label} (expected train4m_N or overfit100_N)")
 
 
-def ensure_pair_repulsion_buffers(calc):
-    for model in getattr(calc, "models", []):
-        pr = getattr(model, "pair_repulsion_fn", None)
-        if pr is None:
-            continue
-        if not hasattr(pr, "covalent_radii"):
-            pr.register_buffer(
-                "covalent_radii",
-                torch.tensor(ase.data.covalent_radii, dtype=torch.get_default_dtype()),
-            )
-        if not hasattr(pr, "alpha"):
-            pr.register_buffer("alpha", torch.tensor(4.0, dtype=torch.get_default_dtype()))
-
-
 def load_mace_calculator(model_path: str, device: str) -> MACECalculator:
     calc = MACECalculator(
         model_paths=[model_path],
         device=device,
         default_dtype="float64",
     )
-    ensure_pair_repulsion_buffers(calc)
     return calc
 
 

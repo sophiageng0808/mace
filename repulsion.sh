@@ -2,7 +2,7 @@
 #SBATCH --job-name=mace_repulsion
 #SBATCH --output=outslurm/%x_%A_%a.out
 #SBATCH --error=outslurm/%x_%A_%a.err
-#SBATCH --time=9:00:00
+#SBATCH --time=24:00:00
 #SBATCH --array=1-2
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
@@ -29,11 +29,13 @@ TASK="${SLURM_ARRAY_TASK_ID:-}"
 
 case "$TASK" in
   1)
-    NAME=repulsion_zbl
+    NAME="repulsion_zbl_${ZBL_SCALE}"
+    RUN_DIR_TAG="zbl_${ZBL_SCALE}"
     PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl --zbl_scale $ZBL_SCALE"
     ;;
   2)
-    NAME=repulsion_r12
+    NAME="repulsion_r12_${R12_SCALE}"
+    RUN_DIR_TAG="r12_${R12_SCALE}"
     PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds r12 --r12_scale $R12_SCALE --r12_cutoff $R12_CUTOFF"
     ;;
   *) echo "Unknown SLURM_ARRAY_TASK_ID=$TASK (use 1 or 2)"; exit 1 ;;
@@ -56,9 +58,7 @@ export PYTHONNOUSERSITE=1 PYTHONPATH="$WT${PYTHONPATH:+:$PYTHONPATH}" WANDB_MODE
 
 RUN_GROUP="${RUN_GROUP:-${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-job}}}"
 RESTART_INDEX="${RESTART_INDEX:-1}"
-case "$TASK" in 1) RUN_SUFFIX="zbl${ZBL_SCALE}" ;; 2) RUN_SUFFIX="r12${R12_SCALE}" ;; esac
-RUN_TAG="train4M_ep${EPOCHS}_${RUN_SUFFIX}"
-RUN_DIR="$RUNS_ROOT/$RUN_TAG"
+RUN_DIR="$RUNS/$RUN_DIR_TAG"
 mkdir -p "$RUN_DIR"
 cd "$RUN_DIR"
 
@@ -76,16 +76,16 @@ mkdir -p "$MPLCONFIGDIR" "$FC_CACHEDIR"
 RL=()
 { [ "$RESTART_INDEX" -gt 1 ] || [ "$HAS_CKPT" = true ]; } && RL=(--restart_latest)
 
-echo "RUN_DIR=$RUN_DIR task=$TASK $NAME"
+echo "RUN_DIR=$RUN_DIR task=$TASK $RUN_DIR_TAG ($NAME)"
 
-python "$REPULSION_WT/mace/cli/run_train.py" \
+python "$WT/mace/cli/run_train.py" \
   --name="$NAME" \
-  --train_file="$H5_ROOT/train" \
-  --valid_file="$H5_ROOT/val" \
+  --train_file="$H5/train" \
+  --valid_file="$H5/val" \
   --valid_fraction=0.0 \
-  --test_file="$H5_ROOT/test" \
-  --E0s="$H5_ROOT/E0s.json" \
-  --model="$MODEL" \
+  --test_file="$H5/test" \
+  --E0s="$H5/E0s.json" \
+  --model="${MODEL:-MACE}" \
   --max_num_epochs="$EPOCHS" \
   --max_samples_per_epoch="$MAX_SAMPLES_PER_EPOCH" \
   ${ATOMIC_NUMS:+--atomic_numbers "$ATOMIC_NUMS"} \
