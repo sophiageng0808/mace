@@ -89,8 +89,8 @@ python "$REPULSION_WT/mace/cli/run_train.py" \
   --max_num_epochs="$EPOCHS" \
   --max_samples_per_epoch="$MAX_SAMPLES_PER_EPOCH" \
   ${ATOMIC_NUMS:+--atomic_numbers "$ATOMIC_NUMS"} \
-  --patience=25 \
-  --scheduler_patience=25 \
+  --patience=30 \
+  --scheduler_patience=10 \
   --seed=0 \
   --default_dtype=float32 \
   --device=cuda \
