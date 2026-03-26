@@ -16,7 +16,14 @@ import mace.modules.repulsion
 # -----------------------------
 USER = os.environ.get("USER", "unknown")
 SCRATCH_MACE = Path(f"/scratch/{USER}/mace")
-DATA_H5 = str(SCRATCH_MACE / "data" / "train4M_h5" / "test")
+# Defaults match repulsion_preprocessed.sh: preprocessed H5 + train4M_h5/E0s.json
+DATA_H5 = os.environ.get(
+    "DATA_H5",
+    str(SCRATCH_MACE / "data" / "train4M_h5_preprocessed" / "test"),
+)
+E0S_FILE = Path(
+    os.environ.get("E0S_FILE", str(SCRATCH_MACE / "data" / "train4M_h5" / "E0s.json"))
+)
 N_STRUCTURES_DEFAULT = None  # None = full dataset
 SEED_DEFAULT = 0
 
@@ -32,10 +39,42 @@ CLAMP_THRESHOLD = 9.9e5
 # -----------------------------
 RUNS_ROOT = Path(os.environ.get("RUNS_ROOT", f"/scratch/{USER}/mace_worktrees/jobs_repulsion"))
 REPULSION_MODELS = [
-    ("r12 scale 1.0", str(RUNS_ROOT / "r12_1.0" / "repulsion_r12_1.0.model")),
-    ("r12 scale 0.1", str(RUNS_ROOT / "r12_0.1" / "repulsion_r12_0.1.model")),
-    ("zbl scale 1.0", str(RUNS_ROOT / "zbl_1.0" / "repulsion_zbl_1.0.model")),
-    ("zbl scale 0.1", str(RUNS_ROOT / "zbl_0.1" / "repulsion_zbl_0.1.model")),
+    (
+        "r12 scale 1.0",
+        str(
+            RUNS_ROOT
+            / "r12_1.0"
+            / "checkpoints"
+            / "repulsion_r12_1.0_run-0_epoch-123.model"
+        ),
+    ),
+    (
+        "r12 scale 0.1",
+        str(
+            RUNS_ROOT
+            / "r12_0.1"
+            / "checkpoints"
+            / "repulsion_r12_0.1_run-0_epoch-104.model"
+        ),
+    ),
+    (
+        "zbl scale 1.0",
+        str(
+            RUNS_ROOT
+            / "zbl_1.0_preprocessed"
+            / "checkpoints"
+            / "repulsion_zbl_1.0_preprocessed_run-0_epoch-6.model"
+        ),
+    ),
+    (
+        "zbl scale 0.1",
+        str(
+            RUNS_ROOT
+            / "zbl_0.1_preprocessed"
+            / "checkpoints"
+            / "repulsion_zbl_0.1_preprocessed_run-0_epoch-6.model"
+        ),
+    ),
 ]
 
 # -----------------------------
@@ -75,6 +114,24 @@ def _unpack_h5_value(value):
     return None if str(value) == "None" else value
 
 
+def _scalar_property_to_info_float(arr: np.ndarray):
+    """Return float for info dict, or None to omit (non-numeric, empty string, NaN/inf)."""
+    if arr.size == 0:
+        return None
+    if not (arr.ndim == 0 or (arr.ndim == 1 and arr.size == 1)):
+        return None
+    if np.issubdtype(arr.dtype, np.number):
+        x = float(arr.reshape(-1)[0])
+        return x if np.isfinite(x) else None
+    raw = arr.reshape(-1)[0]
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    s = str(raw).strip()
+    if s == "" or s.lower() == "none":
+        return None
+    return None
+
+
 def load_frames_from_h5(h5_dir: str) -> list:
     """Load structures from MACE sharded HDF5 directory (e.g. train4M_h5/test)."""
     import h5py
@@ -103,12 +160,15 @@ def load_frames_from_h5(h5_dir: str) -> list:
                     atoms = Atoms(numbers=numbers, positions=positions, cell=cell, pbc=pbc)
                     for k, v in sub["properties"].items():
                         val = _unpack_h5_value(v[()])
-                        if val is not None:
-                            arr = np.asarray(val)
-                            if arr.ndim == 0 or (arr.ndim == 1 and arr.size == 1):
-                                atoms.info[k] = float(arr) if arr.size else val
-                            elif arr.ndim == 2:
-                                atoms.arrays[k] = arr
+                        if val is None:
+                            continue
+                        arr = np.asarray(val)
+                        if arr.ndim == 0 or (arr.ndim == 1 and arr.size == 1):
+                            xf = _scalar_property_to_info_float(arr)
+                            if xf is not None:
+                                atoms.info[k] = xf
+                        elif arr.ndim == 2:
+                            atoms.arrays[k] = arr
                     if "total_charge" in atoms.info and "charge" not in atoms.info:
                         atoms.info["charge"] = atoms.info["total_charge"]
                     if "total_spin" in atoms.info and "spin" not in atoms.info:
@@ -407,6 +467,8 @@ if __name__ == "__main__":
             settings=wandb.Settings(start_method="thread"),
         )
 
+    if not E0S_FILE.is_file():
+        raise FileNotFoundError(f"Missing E0S_FILE: {E0S_FILE}")
     h5_dir = Path(DATA_H5)
     if not h5_dir.is_dir():
         raise FileNotFoundError(f"Missing H5 directory: {DATA_H5}")

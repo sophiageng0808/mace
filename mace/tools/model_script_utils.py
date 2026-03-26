@@ -77,20 +77,37 @@ def configure_model(
                 head_config.std = 1.0
         logging.info("No scaling selected")
 
+    # Prefer per-head mean/std from head_config (e.g. --statistics_file). The old
+    # condition required args.std to be set, so statistics-only runs still hit the
+    # full-dataset scaling pass below (very slow on multi-million configs).
+    # Only enter this branch when we actually have a scalar std or full per-head std,
+    # otherwise we must fall through to the scaling pass (do not use `if head_configs
+    # and not isinstance(args.std, list)` alone — that matches args.std is None and
+    # skips scaling incorrectly).
+    heads_have_all_std = head_configs is not None and all(
+        getattr(hc, "std", None) is not None for hc in head_configs
+    )
     if (
         head_configs is not None
-        and args.std is not None
         and not isinstance(args.std, list)
+        and (heads_have_all_std or args.std is not None)
     ):
         atomic_inter_scale = []
         for head_config in head_configs:
             if hasattr(head_config, "std") and head_config.std is not None:
-                atomic_inter_scale.append(head_config.std)
+                atomic_inter_scale.append(float(head_config.std))
             elif args.std is not None:
                 atomic_inter_scale.append(
-                    args.std if isinstance(args.std, float) else 1.0
+                    float(args.std) if isinstance(args.std, (float, int)) else 1.0
                 )
+            else:
+                atomic_inter_scale.append(1.0)
         args.std = atomic_inter_scale
+        heads_all_mean = all(
+            getattr(hc, "mean", None) is not None for hc in head_configs
+        )
+        if heads_all_mean and args.mean is None:
+            args.mean = [float(hc.mean) for hc in head_configs]
 
     elif (args.mean is None or args.std is None) and (
         args.model not in ("AtomicDipolesMACE", "AtomicDielectricMACE")

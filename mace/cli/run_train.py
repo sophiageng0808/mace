@@ -269,9 +269,13 @@ def run(args) -> None:
                 head_config.atomic_energies_dict = parse_e0s_json_object(loaded_e0s)
             else:
                 head_config.E0s = statistics["atomic_energies"]
-                head_config.atomic_energies_dict = ast.literal_eval(
-                    statistics["atomic_energies"]
-                )
+                raw_e0s = ast.literal_eval(statistics["atomic_energies"])
+                if isinstance(raw_e0s, dict) and raw_e0s:
+                    head_config.atomic_energies_dict = parse_e0s_json_object(
+                        {str(k): v for k, v in raw_e0s.items()}
+                    )
+                else:
+                    head_config.atomic_energies_dict = raw_e0s
         if head_config.train_file in (["mp"], ["matpes_pbe"], ["matpes_r2scan"]):
             assert (
                 head_config.head_name == "pt_head"

@@ -15,17 +15,22 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 MACE="${BASE_REPO:-/scratch/$USER/mace}"
 WT="${REPULSION_WT:-${SLURM_SUBMIT_DIR:-$ROOT}}"
 RUNS="${RUNS_ROOT:-/scratch/$USER/mace_worktrees/jobs_repulsion}"
-H5="${H5:-/scratch/$USER/mace/data/train4M_h5}"
-E0S_FILE="${E0S_FILE:-$H5/E0s.json}"
+# HDF5 train/val/test 
+H5="${H5:-/scratch/$USER/mace/data/train4M_h5_preprocessed}"
+# Isolated-atom energies: always from original train4M_h5 tree 
+E0S_FILE="${E0S_FILE:-/scratch/$USER/mace/data/train4M_h5/E0s.json}"
 ATOMIC_NUMS="[$(python3 -c "import json; d=json.load(open('$E0S_FILE')); print(','.join(str(k) for k in sorted(map(int, d))))" 2>/dev/null)]"
+
+# Preprocessed layout: statistics.json carries mean/std/avg_num_neighbors/E0s 
+STATISTICS_FILE="${STATISTICS_FILE:-$H5/statistics.json}"
 
 EPOCHS="${EPOCHS:-200}"
 MAX_SAMPLES_PER_EPOCH="${MAX_SAMPLES_PER_EPOCH:-20000}"
-BATCH_SIZE="${BATCH_SIZE:-2}"
-VALID_BATCH_SIZE="${VALID_BATCH_SIZE:-1}"
+BATCH_SIZE="${BATCH_SIZE:-4}"
+VALID_BATCH_SIZE="${VALID_BATCH_SIZE:-2}"
 NUM_CHANNELS="${NUM_CHANNELS:-64}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
-ZBL_SCALE="${ZBL_SCALE:-1.0}"
+ZBL_SCALE="${ZBL_SCALE:-0.1}"
 R12_SCALE="${R12_SCALE:-0.1}"
 R12_CUTOFF="${R12_CUTOFF:-0.8}"
 MODEL="${MODEL:-MACE}"
@@ -38,13 +43,13 @@ TASK="${SLURM_ARRAY_TASK_ID:-}"
 
 case "$TASK" in
   1)
-    NAME="repulsion_zbl_${ZBL_SCALE}"
-    RUN_DIR_TAG="zbl_${ZBL_SCALE}"
+    NAME="repulsion_zbl_${ZBL_SCALE}_preprocessed"
+    RUN_DIR_TAG="zbl_${ZBL_SCALE}_preprocessed"
     PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds zbl --zbl_scale $ZBL_SCALE"
     ;;
   2)
-    NAME="repulsion_r12_${R12_SCALE}"
-    RUN_DIR_TAG="r12_${R12_SCALE}"
+    NAME="repulsion_r12_${R12_SCALE}_preprocessed"
+    RUN_DIR_TAG="r12_${R12_SCALE}_preprocessed"
     PAIR_FLAGS="--pair_repulsion --pair_repulsion_kinds r12 --r12_scale $R12_SCALE --r12_cutoff $R12_CUTOFF"
     ;;
   *) echo "Unknown SLURM_ARRAY_TASK_ID=$TASK (use 1 or 2)"; exit 1 ;;
@@ -88,6 +93,13 @@ RL=()
 
 echo "RUN_DIR=$RUN_DIR task=$TASK $RUN_DIR_TAG ($NAME)"
 
+STATS_ARGS=()
+if [[ -f "$STATISTICS_FILE" ]]; then
+  STATS_ARGS=(--statistics_file="$STATISTICS_FILE")
+else
+  echo "warning: no $STATISTICS_FILE; using E0s/atomic_numbers from shell (preprocess should write statistics.json)" >&2
+fi
+
 python "$WT/mace/cli/run_train.py" \
   --name="$NAME" \
   --num_workers="$NUM_WORKERS" \
@@ -95,6 +107,7 @@ python "$WT/mace/cli/run_train.py" \
   --valid_file="$H5/val" \
   --valid_fraction=0.0 \
   --test_file="$H5/test" \
+  "${STATS_ARGS[@]}" \
   --E0s="$E0S_FILE" \
   --model="$MODEL" \
   --num_channels="$NUM_CHANNELS" \
