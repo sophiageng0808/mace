@@ -65,6 +65,9 @@ outslurm/
 *.out
 *.err
 
+# --- Shell scripts (local / cluster; not versioned on this branch) ---
+*.sh
+
 # --- Branch-specific outputs (dissociation scans, plots, etc.) ---
 outputs/
 
