@@ -77,7 +77,7 @@ class ChebychevBasis(torch.nn.Module):
         self.num_basis = num_basis
         self.r_max = r_max
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [..., 1]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  
         x = x.repeat(1, self.num_basis)
         n = self.n.repeat(len(x), 1)
         return torch.special.chebyshev_polynomial_t(x, n)
@@ -276,7 +276,7 @@ def _split_edge_energy_to_nodes(
 
 @compile_mode("script")
 class ZBLRepulsion(torch.nn.Module):
-    """ZBL nuclear repulsion on edges (k_e Z_i Z_j φ(r/a)/r) with (1−r/r_max)^p cutoff."""
+    """ZBL repulsion on edges (k_e Z_i Z_j φ(r/a)/r)"""
 
     def __init__(
         self,
@@ -461,10 +461,6 @@ class R12Repulsion(torch.nn.Module):
 class PairRepulsionSwitch(torch.nn.Module):
     """
     Single pair-repulsion term on edges: either ZBL or r^-12.
-
-    ``kinds`` must be exactly one of ``["zbl"]`` or ``["r12"]``. There is no combined
-    zbl+r12 term; for a run without empirical repulsion, set ``pair_repulsion=False`` on
-    the model (training "baseline") instead of using this module.
     """
 
     def __init__(
@@ -482,7 +478,7 @@ class PairRepulsionSwitch(torch.nn.Module):
                 "PairRepulsionSwitch requires pair_repulsion_kinds to be exactly "
                 "['zbl'] or ['r12'], not combined terms."
             )
-        # Only the active term is stored as a child module (see build_pair_repulsion).
+        # Only the active term is stored as a child module
         if self.kinds[0] == "zbl":
             if zbl is None or r12 is not None:
                 raise ValueError("PairRepulsionSwitch(zbl): expected zbl module only.")
@@ -508,7 +504,6 @@ class PairRepulsionSwitch(torch.nn.Module):
             r_max=r_max,
         )
         n_nodes = node_attrs.shape[0]
-        # Match the leaf module: bidirectional neighbor lists use assume_directed_double=True by default.
         if self.kinds[0] == "zbl":
             assume_directed_double = self.zbl.assume_directed_double
         else:
@@ -528,7 +523,6 @@ class PairRepulsionSwitch(torch.nn.Module):
         atomic_numbers: torch.Tensor,
         r_max: torch.Tensor,
     ) -> torch.Tensor:
-        # Delegate to the single child module built in build_pair_repulsion.
         if self.kinds[0] == "zbl":
             return self.zbl.edge_energy(
                 lengths, node_attrs, edge_index, atomic_numbers, r_max

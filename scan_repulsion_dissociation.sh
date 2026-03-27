@@ -14,7 +14,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 MACE="${BASE_REPO:-/scratch/$USER/mace}"
 WT="${REPULSION_WT:-${SLURM_SUBMIT_DIR:-$ROOT}}"
 G="${GROUP_NAME:-r12_zbl}"
-export DATA_H5="${DATA_H5:-/scratch/$USER/mace/data/train4M_h5_preprocessed/test}"
+export DATA_H5="${DATA_H5:-/scratch/$USER/mace/data/train4M_h5/test}"
 
 N=$SLURM_CPUS_PER_TASK
 export OMP_NUM_THREADS=$N MKL_NUM_THREADS=$N OPENBLAS_NUM_THREADS=$N \

@@ -16,15 +16,14 @@ import mace.modules.repulsion
 # -----------------------------
 USER = os.environ.get("USER", "unknown")
 SCRATCH_MACE = Path(f"/scratch/{USER}/mace")
-# Defaults match repulsion_preprocessed.sh: preprocessed H5 + train4M_h5/E0s.json
 DATA_H5 = os.environ.get(
     "DATA_H5",
-    str(SCRATCH_MACE / "data" / "train4M_h5_preprocessed" / "test"),
+    str(SCRATCH_MACE / "data" / "train4M_h5" / "test"),
 )
 E0S_FILE = Path(
     os.environ.get("E0S_FILE", str(SCRATCH_MACE / "data" / "train4M_h5" / "E0s.json"))
 )
-N_STRUCTURES_DEFAULT = None  # None = full dataset
+N_STRUCTURES_DEFAULT = 1000
 SEED_DEFAULT = 0
 
 STEPS_DEFAULT = 50
@@ -34,9 +33,7 @@ DEVICE_DEFAULT = "cuda" if torch.cuda.is_available() else "cpu"
 
 REL_DROP_TOL = 0.01  # monotonicity tolerance as fraction of curve span
 CLAMP_THRESHOLD = 9.9e5
-# -----------------------------
-# Repulsion models (ABSOLUTE PATHS)
-# -----------------------------
+
 RUNS_ROOT = Path(os.environ.get("RUNS_ROOT", f"/scratch/{USER}/mace_worktrees/jobs_repulsion"))
 REPULSION_MODELS = [
     (
@@ -106,9 +103,6 @@ SUMMARY_HEADER = [
     "mean_mean_force_cos_angle", "mean_min_force_cos_angle",
 ]
 
-# -----------------------------
-# Helpers
-# -----------------------------
 def _unpack_h5_value(value):
     value = value.decode("utf-8") if isinstance(value, bytes) else value
     return None if str(value) == "None" else value
@@ -367,9 +361,8 @@ def run_scan(
     e_mono = monotone_nondecreasing(raw_e)
     f_mono = monotone_nondecreasing(raw_f)
     f_abs_mono = monotone_nondecreasing(raw_f_abs)
-    # Failure is defined only from force (-Fi·u) monotonicity; energy is still logged below.
-    failed = not f_mono
-    # Don't fail when clamp is hit ONLY if force monotonicity breaks are clamp artifacts.
+    # Failure is defined only from force (-Fi·u) monotonicity
+
     min_e, max_e = float(np.min(raw_e)), float(np.max(raw_e))
     hit_clamp = (min_e <= -CLAMP_THRESHOLD) or (max_e >= CLAMP_THRESHOLD)
     if hit_clamp and failed:
@@ -380,7 +373,7 @@ def run_scan(
     has_nan_only = (n_nan_energy + n_nan_force) > 0 and (n_inf_energy + n_inf_force) == 0
 
     f_fail_idx = first_failure_index(raw_f)
-    # d_fail: distance at first force monotonicity failure (aligned with `failed`).
+    
     d_fail = float(dist[f_fail_idx]) if f_fail_idx is not None else np.nan
 
     row = [
@@ -464,7 +457,6 @@ if __name__ == "__main__":
             project="dmlip-dissociation-scan-overfit100",
             name=f"overfit100_scan_{run_id}",
             config={"group": group_name, "run_id": run_id, "device": device},
-            settings=wandb.Settings(start_method="thread"),
         )
 
     if not E0S_FILE.is_file():

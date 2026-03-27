@@ -218,7 +218,7 @@ def print_git_commit():
         commit = repo.head.commit.hexsha
         logging.debug(f"Current Git commit: {commit}")
         return commit
-    except Exception as e:  # pylint: disable=W0703
+    except Exception as e: 
         logging.debug(f"Error accessing Git repository: {e}")
         return "None"
 
@@ -265,7 +265,18 @@ def _repulsion_config_from_model(model_obj: torch.nn.Module) -> Dict[str, Any]:
     return cfg
 
 
+def _unwrap_picklesafe_mace_if_needed(model: torch.nn.Module) -> torch.nn.Module:
+    """``PickleSafeMACE`` delegates to ``ScaleShiftMACE``; treat the inner module as the model."""
+    if type(model).__name__ != "PickleSafeMACE":
+        return model
+    inner = getattr(model, "_mace_inner", None)
+    if inner is None:
+        raise RuntimeError("PickleSafeMACE has no _mace_inner; cannot unwrap")
+    return inner
+
+
 def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
+    model = _unwrap_picklesafe_mace_if_needed(model)
     if model.__class__.__name__ not in ["ScaleShiftMACE", "MACELES"]:
         return {"error": "Model is not a ScaleShiftMACE or MACELES model"}
 
@@ -509,8 +520,9 @@ def remove_pt_head(
 
 
 def extract_model(model: torch.nn.Module, map_location: str = "cpu") -> torch.nn.Module:
-    model_copy = model.__class__(**extract_config_mace_model(model))
-    model_copy.load_state_dict(model.state_dict())
+    inner = _unwrap_picklesafe_mace_if_needed(model)
+    model_copy = inner.__class__(**extract_config_mace_model(inner))
+    model_copy.load_state_dict(inner.state_dict())
     return model_copy.to(map_location)
 
 
