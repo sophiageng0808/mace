@@ -67,6 +67,7 @@ outslurm/
 
 # --- Shell scripts (local / cluster; not versioned on this branch) ---
 *.sh
+!scripts/run_checks.sh
 
 # --- Branch-specific outputs (dissociation scans, plots, etc.) ---
 outputs/
