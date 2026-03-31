@@ -23,7 +23,7 @@ DATA_H5 = os.environ.get(
 E0S_FILE = Path(
     os.environ.get("E0S_FILE", str(SCRATCH_MACE / "data" / "train4M_h5" / "E0s.json"))
 )
-N_STRUCTURES_DEFAULT = 1000
+N_STRUCTURES_DEFAULT = 5000
 SEED_DEFAULT = 0
 
 STEPS_DEFAULT = 50
@@ -37,12 +37,39 @@ CLAMP_THRESHOLD = 9.9e5
 RUNS_ROOT = Path(os.environ.get("RUNS_ROOT", f"/scratch/{USER}/mace_worktrees/jobs_repulsion"))
 REPULSION_MODELS = [
     (
-        "r12 scale 1.0",
+        "zbl_1.0",
         str(
             RUNS_ROOT
-            / "r12_1.0"
+            / "zbl_1.0"
             / "checkpoints"
-            / "repulsion_r12_1.0_run-0_epoch-123.model"
+            / "repulsion_zbl_1.0_run-0_epoch-168.model"
+        ),
+    ),
+    (
+        "zbl_0.1_preprocessed",
+        str(
+            RUNS_ROOT
+            / "zbl_0.1_preprocessed"
+            / "checkpoints"
+            / "repulsion_zbl_0.1_preprocessed_run-0_epoch-21.model"
+        ),
+    ),
+    (
+        "zbl_0.1_lr0.001",
+        str(
+            RUNS_ROOT
+            / "zbl_0.1_lr0.001"
+            / "checkpoints"
+            / "repulsion_zbl_0.1_lr0.001_run-0_epoch-58.model"
+        ),
+    ),
+    (
+        "zbl_0.1",
+        str(
+            RUNS_ROOT
+            / "zbl_0.1"
+            / "checkpoints"
+            / "repulsion_zbl_0.1_run-0_epoch-58.model"
         ),
     ),
     (
@@ -55,21 +82,12 @@ REPULSION_MODELS = [
         ),
     ),
     (
-        "zbl scale 1.0",
+        "r12 scale 1.0",
         str(
             RUNS_ROOT
-            / "zbl_1.0_preprocessed"
+            / "r12_1.0"
             / "checkpoints"
-            / "repulsion_zbl_1.0_preprocessed_run-0_epoch-6.model"
-        ),
-    ),
-    (
-        "zbl scale 0.1",
-        str(
-            RUNS_ROOT
-            / "zbl_0.1_preprocessed"
-            / "checkpoints"
-            / "repulsion_zbl_0.1_preprocessed_run-0_epoch-6.model"
+            / "repulsion_r12_1.0_run-0_epoch-123.model"
         ),
     ),
 ]
@@ -362,6 +380,7 @@ def run_scan(
     f_mono = monotone_nondecreasing(raw_f)
     f_abs_mono = monotone_nondecreasing(raw_f_abs)
     # Failure is defined only from force (-Fi·u) monotonicity
+    failed = not f_mono
 
     min_e, max_e = float(np.min(raw_e)), float(np.max(raw_e))
     hit_clamp = (min_e <= -CLAMP_THRESHOLD) or (max_e >= CLAMP_THRESHOLD)
@@ -373,7 +392,7 @@ def run_scan(
     has_nan_only = (n_nan_energy + n_nan_force) > 0 and (n_inf_energy + n_inf_force) == 0
 
     f_fail_idx = first_failure_index(raw_f)
-    
+
     d_fail = float(dist[f_fail_idx]) if f_fail_idx is not None else np.nan
 
     row = [
