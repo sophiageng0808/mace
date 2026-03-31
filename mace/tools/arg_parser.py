@@ -66,14 +66,14 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         help="select device",
         type=str,
         choices=["cpu", "cuda", "mps", "xpu"],
-        default="cpu",
+        default="cuda",
     )
     parser.add_argument(
         "--default_dtype",
         help="set default dtype",
         type=str,
         choices=["float32", "float64"],
-        default="float64",
+        default="float32",
     )
     parser.add_argument(
         "--distributed",
@@ -760,7 +760,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--optimizer",
         help="Optimizer for parameter optimization",
         type=str,
-        default="adam",
+        default="adamw",
         choices=["adam", "adamw", "schedulefree"],
     )
     parser.add_argument(
@@ -783,6 +783,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--batch_size", help="batch size", type=int, default=10)
     parser.add_argument(
+        "--max_samples_per_epoch",
+        help="maximum number of training samples (graphs) to consume in a single epoch before running evaluation",
+        type=int,
+        default=200000,
+    )
+    parser.add_argument(
         "--valid_batch_size", help="Validation batch size", type=int, default=10
     )
     parser.add_argument(
@@ -797,7 +803,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         dest="swa_lr",
     )
     parser.add_argument(
-        "--weight_decay", help="weight decay (L2 penalty)", type=float, default=5e-7
+        "--weight_decay", help="weight decay (L2 penalty)", type=float, default=0.0
     )
     parser.add_argument(
         "--lr_params_factors",
@@ -957,8 +963,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--wandb",
         help="Use Weights and Biases for experiment tracking",
-        action="store_true",
-        default=False,
+        type=str2bool,
+        default=True,
     )
     parser.add_argument(
         "--wandb_dir",

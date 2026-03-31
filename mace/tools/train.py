@@ -6,6 +6,7 @@
 
 import dataclasses
 import logging
+import math
 import time
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
@@ -162,6 +163,7 @@ def train(
     output_args: Dict[str, bool],
     device: torch.device,
     log_errors: str,
+    max_samples_per_epoch: int,
     swa: Optional[SWAContainer] = None,
     ema: Optional[ExponentialMovingAverage] = None,
     max_grad_norm: Optional[float] = 10.0,
@@ -189,8 +191,17 @@ def train(
     logging.info("Started training, reporting errors on validation set")
     logging.info("Loss metrics on validation set")
     epoch = start_epoch
+    batch_size = getattr(train_loader, "batch_size", None)
+    if batch_size is not None and batch_size > 0:
+        max_steps_per_epoch = min(
+            len(train_loader), math.ceil(max_samples_per_epoch / batch_size)
+        )
+    else:
+        max_steps_per_epoch = len(train_loader)
+    global_step = start_epoch * max_steps_per_epoch
 
     # log validation loss before _any_ training
+    initial_wandb_log_dict = {}
     for valid_loader_name, valid_loader in valid_loaders.items():
         valid_loss_head, eval_metrics = evaluate(
             model=model,
@@ -202,7 +213,16 @@ def train(
         valid_err_log(
             valid_loss_head, eval_metrics, logger, log_errors, None, valid_loader_name
         )
+        if log_wandb and rank == 0:
+            initial_wandb_log_dict[valid_loader_name] = {
+                "epoch": epoch,
+                "valid_loss": valid_loss_head,
+                "valid_rmse_e_per_atom": eval_metrics["rmse_e_per_atom"],
+                "valid_rmse_f": eval_metrics["rmse_f"],
+            }
     valid_loss = valid_loss_head  # consider only the last head for the checkpoint
+    if log_wandb and rank == 0:
+        wandb.log(initial_wandb_log_dict, step=global_step)
 
     # variable used for broadcast by rank == 0 if epoch loop is exited early, e.g. patience
     exit_now = torch.zeros(1, device=device) if distributed else None
@@ -229,7 +249,7 @@ def train(
             train_sampler.set_epoch(epoch)
         if "ScheduleFree" in type(optimizer).__name__:
             optimizer.train()
-        train_one_epoch(
+        global_step = train_one_epoch(
             model=model,
             loss_fn=loss_fn,
             data_loader=train_loader,
@@ -243,6 +263,9 @@ def train(
             distributed=distributed,
             distributed_model=distributed_model,
             rank=rank,
+            log_wandb=log_wandb,
+            global_step=global_step,
+            max_samples_per_epoch=max_samples_per_epoch,
         )
         if distributed:
             torch.distributed.barrier()
@@ -294,7 +317,7 @@ def train(
                     valid_loss_head  # consider only the last head for the checkpoint
                 )
             if log_wandb:
-                wandb.log(wandb_log_dict)
+                wandb.log(wandb_log_dict, step=global_step)
             if rank == 0:
                 if valid_loss >= lowest_loss:
                     patience_counter += 1
@@ -361,8 +384,13 @@ def train_one_epoch(
     distributed: bool,
     distributed_model: Optional[DistributedDataParallel] = None,
     rank: Optional[int] = 0,
-) -> None:
+    log_wandb: bool = False,
+    global_step: int = 0,
+    max_samples_per_epoch: int = 200000,
+) -> int:
     model_to_train = model if distributed_model is None else distributed_model
+    if log_wandb and rank == 0:
+        import wandb
 
     if isinstance(optimizer, LBFGS):
         _, opt_metrics = take_step_lbfgs(
@@ -376,12 +404,23 @@ def train_one_epoch(
             device=device,
             distributed=distributed,
             rank=rank,
+            max_samples_per_epoch=max_samples_per_epoch,
         )
         opt_metrics["mode"] = "opt"
         opt_metrics["epoch"] = epoch
         if rank == 0:
             logger.log(opt_metrics)
+            global_step += 1
+            if log_wandb:
+                wandb.log(
+                    {
+                        "train_loss": opt_metrics["loss"],
+                        "epoch": epoch,
+                    },
+                    step=global_step,
+                )
     else:
+        samples_processed = 0
         for batch in data_loader:
             _, opt_metrics = take_step(
                 model=model_to_train,
@@ -397,6 +436,19 @@ def train_one_epoch(
             opt_metrics["epoch"] = epoch
             if rank == 0:
                 logger.log(opt_metrics)
+                global_step += 1
+                if log_wandb:
+                    wandb.log(
+                        {
+                            "train_loss": opt_metrics["loss"],
+                            "epoch": epoch,
+                        },
+                        step=global_step,
+                    )
+            samples_processed += batch.num_graphs
+            if samples_processed >= max_samples_per_epoch:
+                break
+    return global_step
 
 
 def take_step(
@@ -454,6 +506,7 @@ def take_step_lbfgs(
     device: torch.device,
     distributed: bool,
     rank: int,
+    max_samples_per_epoch: int,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
     logging.debug(
@@ -463,6 +516,8 @@ def take_step_lbfgs(
     total_sample_count = 0
     for batch in data_loader:
         total_sample_count += batch.num_graphs
+        if total_sample_count >= max_samples_per_epoch:
+            break
 
     if distributed:
         global_sample_count = torch.tensor(total_sample_count, device=device)
@@ -486,6 +541,7 @@ def take_step_lbfgs(
         total_loss = torch.tensor(0.0, device=device)
 
         # Process each batch and then collect the results we pass to the optimizer
+        processed_samples = 0
         for batch in data_loader:
             batch = batch.to(device)
             batch_dict = batch.to_dict()
@@ -501,6 +557,9 @@ def take_step_lbfgs(
 
             batch_loss.backward()
             total_loss += batch_loss
+            processed_samples += batch.num_graphs
+            if processed_samples >= max_samples_per_epoch:
+                break
 
         if max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)

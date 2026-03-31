@@ -14,8 +14,8 @@
   - [About MACE](#about-mace)
   - [Documentation](#documentation)
   - [Installation](#installation)
-    - [pip installation](#installation-from-pypi)
-    - [pip installation from source](#installation-from-source)
+    - [uv installation](#installation-from-pypi)
+    - [uv installation from source](#installation-from-source)
   - [Usage](#usage)
     - [Training](#training)
     - [Evaluation](#evaluation)
@@ -65,8 +65,7 @@ A partial documentation is available at: https://mace-docs.readthedocs.io
 This is the recommended way to install MACE.
 
 ```sh
-pip install --upgrade pip
-pip install mace-torch
+uv tool install mace-torch
 ```
 
 **Note:** The homonymous package on [PyPI](https://pypi.org/project/MACE/) has nothing to do with this one.
@@ -75,7 +74,10 @@ pip install mace-torch
 
 ```sh
 git clone https://github.com/ACEsuit/mace.git
-pip install ./mace
+cd mace
+uv venv
+source .venv/bin/activate
+uv pip install -e .
 ```
 
 ## Usage
@@ -141,7 +143,7 @@ train_file: train.xyz
 stage_two: yes
 start_stage_two: 1200
 max_num_epochs: 1500
-device: cpu
+device: cuda
 test_file: test.xyz
 E0s:
   41: -1029.2809654211628
@@ -227,13 +229,13 @@ python ./mace/scripts/run_train.py \
 
 ## Weights and Biases for experiment tracking
 
-If you would like to use MACE with Weights and Biases to log your experiments simply install with
+Weights and Biases logging is enabled by default during training. Before running training, authenticate once with:
 
 ```sh
-pip install ./mace[wandb]
+wandb login
 ```
 
-And specify the necessary keyword arguments (`--wandb`, `--wandb_project`, `--wandb_entity`, `--wandb_name`, `--wandb_log_hypers`)
+Then specify the necessary keyword arguments (`--wandb_project`, `--wandb_entity`, `--wandb_name`, `--wandb_log_hypers`). To disable logging for a run, use `--wandb=False`.
 
 ## Pretrained Foundation Models
 
@@ -336,7 +338,9 @@ We recommend setting up your development environment by installing the `dev` pac
 into your python environment:
 
 ```bash
-pip install -e ".[dev]"
+uv venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
 pre-commit install
 ```
 

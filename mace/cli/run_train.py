@@ -896,6 +896,7 @@ def run(args) -> None:
         save_all_checkpoints=args.save_all_checkpoints,
         output_args=output_args,
         device=device,
+        max_samples_per_epoch=args.max_samples_per_epoch,
         swa=swa,
         ema=ema,
         max_grad_norm=args.clip_grad,

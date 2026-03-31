@@ -145,7 +145,6 @@ class PolynomialCutoff(torch.nn.Module):
         return f"{self.__class__.__name__}(p={self.p}, r_max={self.r_max})"
 
 
-@compile_mode("script")
 class ZBLBasis(torch.nn.Module):
     """Implementation of the Ziegler-Biersack-Littmark (ZBL) potential
     with a polynomial cutoff envelope.
