@@ -109,6 +109,23 @@ def mean_squared_error_forces(
     return reduce_loss(raw_loss, ddp)
 
 
+def mean_absolute_error_forces(
+    ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
+) -> torch.Tensor:
+    configs_weight = torch.repeat_interleave(
+        ref.weight, ref.ptr[1:] - ref.ptr[:-1]
+    ).unsqueeze(-1)
+    configs_forces_weight = torch.repeat_interleave(
+        ref.forces_weight, ref.ptr[1:] - ref.ptr[:-1]
+    ).unsqueeze(-1)
+    raw_loss = (
+        configs_weight
+        * configs_forces_weight
+        * torch.abs(ref["forces"] - pred["forces"])
+    )
+    return reduce_loss(raw_loss, ddp)
+
+
 def mean_normed_error_forces(
     ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
 ) -> torch.Tensor:
@@ -232,8 +249,8 @@ class WeightedEnergyForcesLoss(torch.nn.Module):
     def forward(
         self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
     ) -> torch.Tensor:
-        loss_energy = weighted_mean_squared_error_energy(ref, pred, ddp)
-        loss_forces = mean_squared_error_forces(ref, pred, ddp)
+        loss_energy = weighted_mean_absolute_error_energy(ref, pred, ddp)
+        loss_forces = mean_absolute_error_forces(ref, pred, ddp)
         return self.energy_weight * loss_energy + self.forces_weight * loss_forces
 
     def __repr__(self):
@@ -254,7 +271,7 @@ class WeightedForcesLoss(torch.nn.Module):
     def forward(
         self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
     ) -> torch.Tensor:
-        loss_forces = mean_squared_error_forces(ref, pred, ddp)
+        loss_forces = mean_absolute_error_forces(ref, pred, ddp)
         return self.forces_weight * loss_forces
 
     def __repr__(self):
@@ -280,8 +297,8 @@ class WeightedEnergyForcesStressLoss(torch.nn.Module):
     def forward(
         self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
     ) -> torch.Tensor:
-        loss_energy = weighted_mean_squared_error_energy(ref, pred, ddp)
-        loss_forces = mean_squared_error_forces(ref, pred, ddp)
+        loss_energy = weighted_mean_absolute_error_energy(ref, pred, ddp)
+        loss_forces = mean_absolute_error_forces(ref, pred, ddp)
         loss_stress = weighted_mean_squared_stress(ref, pred, ddp)
         return (
             self.energy_weight * loss_energy
@@ -464,8 +481,8 @@ class WeightedEnergyForcesVirialsLoss(torch.nn.Module):
     def forward(
         self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
     ) -> torch.Tensor:
-        loss_energy = weighted_mean_squared_error_energy(ref, pred, ddp)
-        loss_forces = mean_squared_error_forces(ref, pred, ddp)
+        loss_energy = weighted_mean_absolute_error_energy(ref, pred, ddp)
+        loss_forces = mean_absolute_error_forces(ref, pred, ddp)
         loss_virials = weighted_mean_squared_virials(ref, pred, ddp)
         return (
             self.energy_weight * loss_energy
@@ -557,8 +574,8 @@ class WeightedEnergyForcesDipoleLoss(torch.nn.Module):
     def forward(
         self, ref: Batch, pred: TensorDict, ddp: Optional[bool] = None
     ) -> torch.Tensor:
-        loss_energy = weighted_mean_squared_error_energy(ref, pred, ddp)
-        loss_forces = mean_squared_error_forces(ref, pred, ddp)
+        loss_energy = weighted_mean_absolute_error_energy(ref, pred, ddp)
+        loss_forces = mean_absolute_error_forces(ref, pred, ddp)
         loss_dipole = weighted_mean_squared_error_dipole(ref, pred, ddp) * 100.0
         return (
             self.energy_weight * loss_energy

@@ -1062,23 +1062,47 @@ def dict_to_array(input_data, heads):
 
 
 class LRScheduler:
+    _PLATEAU_HOLD_PATIENCE = 10**9  # effectively infinite for ReduceLROnPlateau
+
     def __init__(self, optimizer, args) -> None:
         self.scheduler = args.scheduler
         self._optimizer_type = (
             args.optimizer
         )  # Schedulefree does not need an optimizer but checkpoint handler does.
+        hold = getattr(args, "scheduler_hold_epochs", 0)
+        self._hold_epochs = hold if isinstance(hold, int) and hold > 0 else None
+        self._plateau_patience = args.scheduler_patience
         if args.scheduler == "ExponentialLR":
             self.lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
                 optimizer=optimizer, gamma=args.lr_scheduler_gamma
             )
         elif args.scheduler == "ReduceLROnPlateau":
+            init_p = (
+                self._PLATEAU_HOLD_PATIENCE
+                if self._hold_epochs is not None
+                else args.scheduler_patience
+            )
             self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer=optimizer,
                 factor=args.lr_factor,
-                patience=args.scheduler_patience,
+                patience=init_p,
             )
         else:
             raise RuntimeError(f"Unknown scheduler: '{args.scheduler}'")
+
+    def sync_plateau_patience_for_epoch(self, epoch: int) -> None:
+        if self.scheduler != "ReduceLROnPlateau" or self._hold_epochs is None:
+            return
+        want = (
+            self._plateau_patience
+            if epoch >= self._hold_epochs
+            else self._PLATEAU_HOLD_PATIENCE
+        )
+        inner = self.lr_scheduler
+        if inner.patience != want:
+            inner.patience = want
+            inner.num_bad_epochs = 0
+            logging.info("ReduceLROnPlateau patience -> %s (epoch %s)", want, epoch)
 
     def step(self, metrics=None, epoch=None):  # pylint: disable=E1123
         if self._optimizer_type == "schedulefree":

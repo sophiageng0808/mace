@@ -865,10 +865,22 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--scheduler", help="Type of scheduler", type=str, default="ReduceLROnPlateau"
     )
     parser.add_argument(
-        "--lr_factor", help="Learning rate factor", type=float, default=0.8
+        "--lr_factor",
+        help="ReduceLROnPlateau: multiply LR by this when validation plateaus",
+        type=float,
+        default=0.8,
     )
     parser.add_argument(
-        "--scheduler_patience", help="Learning rate factor", type=int, default=50
+        "--scheduler_patience",
+        help="ReduceLROnPlateau: epochs without val improvement before lowering LR (after hold, if any)",
+        type=int,
+        default=50,
+    )
+    parser.add_argument(
+        "--scheduler_hold_epochs",
+        help="ReduceLROnPlateau: keep LR fixed for this many epochs (infinite patience), then use --scheduler_patience. 0 = disabled.",
+        type=int,
+        default=0,
     )
     parser.add_argument(
         "--lr_scheduler_gamma",

@@ -195,10 +195,12 @@ def train(
         )
     valid_loss = valid_loss_head  # consider only the last head for the checkpoint
 
+    opt_step = 0
     while epoch < max_num_epochs:
         patience_stop = False
         # LR scheduler and SWA update
         if swa is None or epoch < swa.start:
+            lr_scheduler.sync_plateau_patience_for_epoch(epoch)
             if epoch > start_epoch:
                 lr_scheduler.step(
                     metrics=valid_loss
@@ -220,7 +222,7 @@ def train(
         gen = getattr(train_loader, "generator", None)
         if train_shuffle_seed is not None and gen is not None:
             gen.manual_seed(int(train_shuffle_seed) + int(epoch))
-        samples_this_epoch = train_one_epoch(
+        _, opt_step = train_one_epoch(
             model=model,
             loss_fn=loss_fn,
             data_loader=train_loader,
@@ -232,6 +234,8 @@ def train(
             logger=logger,
             device=device,
             max_samples_per_epoch=cap,
+            log_wandb=log_wandb,
+            opt_step=opt_step,
         )
 
         # Validate
@@ -348,9 +352,14 @@ def train_one_epoch(
     logger: MetricsLogger,
     device: torch.device,
     max_samples_per_epoch: Optional[int] = None,
-) -> int:
+    log_wandb: bool = False,
+    opt_step: int = 0,
+) -> Tuple[int, int]:
+    if log_wandb:
+        import wandb
+
     if isinstance(optimizer, LBFGS):
-        _, opt_metrics, samples_seen = take_step_lbfgs(
+        loss, opt_metrics, samples_seen = take_step_lbfgs(
             model=model,
             loss_fn=loss_fn,
             data_loader=data_loader,
@@ -364,10 +373,18 @@ def train_one_epoch(
         opt_metrics["mode"] = "opt"
         opt_metrics["epoch"] = epoch
         logger.log(opt_metrics)
-        return samples_seen
+        lv = (
+            float(loss.detach().cpu().item())
+            if torch.is_tensor(loss)
+            else float(loss)
+        )
+        if log_wandb:
+            wandb.log({"train/loss": lv}, step=opt_step)
+            opt_step += 1
+        return samples_seen, opt_step
     samples_seen = 0
     for batch in data_loader:
-        _, opt_metrics = take_step(
+        loss, opt_metrics = take_step(
             model=model,
             loss_fn=loss_fn,
             batch=batch,
@@ -380,10 +397,16 @@ def train_one_epoch(
         opt_metrics["mode"] = "opt"
         opt_metrics["epoch"] = epoch
         logger.log(opt_metrics)
+        if log_wandb:
+            wandb.log(
+                {"train/loss": float(loss.detach().cpu().item())},
+                step=opt_step,
+            )
+            opt_step += 1
         samples_seen += int(batch.num_graphs)
         if max_samples_per_epoch is not None and samples_seen >= max_samples_per_epoch:
             break
-    return samples_seen
+    return samples_seen, opt_step
 
 
 def take_step(
