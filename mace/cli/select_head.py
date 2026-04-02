@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 
 import torch
 
-from mace.tools.scripts_utils import remove_pt_head
+from mace.tools.scripts_utils import extract_model, remove_pt_head
 
 
 def main():
@@ -51,8 +51,9 @@ def main():
 
         model_single = remove_pt_head(model, args.head_name)
         if args.target_device is not None:
-            target_device = str(next(model.parameters()).device)
-            model_single.to(target_device)
+            model_single = model_single.to(args.target_device)
+        map_loc = str(next(model_single.parameters()).device)
+        model_single = extract_model(model_single, map_location=map_loc)
         torch.save(model_single, args.output_file)
 
 

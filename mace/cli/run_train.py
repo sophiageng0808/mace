@@ -13,11 +13,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import List, Optional
 
+import torch
 import torch.distributed
 from e3nn.util import jit
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import LBFGS
-from torch.utils.data import ConcatDataset
+from torch.utils.data import ConcatDataset, Subset
 from torch_ema import ExponentialMovingAverage
 
 import mace
@@ -58,6 +59,7 @@ from mace.tools.scripts_utils import (
     convert_to_json_format,
     dict_to_array,
     extract_config_mace_model,
+    extract_model,
     get_atomic_energies,
     get_avg_num_neighbors,
     get_config_type_weights,
@@ -166,7 +168,7 @@ def run(args) -> None:
             )
             model_foundation = calc.models[0]
         else:
-            model_foundation = torch.load(
+            model_foundation = tools.torch_tools.torch_load_compat(
                 args.foundation_model, map_location=args.device
             )
             logging.info(
@@ -651,6 +653,19 @@ def run(args) -> None:
 
     # concatenate all the trainsets
     train_set = ConcatDataset([train_sets[head] for head in heads])
+    cap = args.max_val_samples if args.max_val_samples else 0
+    for head, vs in list(valid_sets.items()):
+        n_val = len(vs)
+        if cap > 0 and n_val > cap:
+            g = torch.Generator().manual_seed(int(args.seed))
+            idx = torch.randperm(n_val, generator=g)[:cap].tolist()
+            valid_sets[head] = Subset(vs, idx)
+            logging.info(
+                "Validation subset for head '%s': using %d of %d structures (--max_val_samples)",
+                head,
+                cap,
+                n_val,
+            )
     train_sampler, valid_sampler = None, None
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -749,11 +764,15 @@ def run(args) -> None:
     if args.enable_cueq and not args.only_cueq:
         logging.info("Converting model to CUEQ for accelerated training")
         assert model.__class__.__name__ in ["MACE", "ScaleShiftMACE", "MACELES"]
-        model = run_e3nn_to_cueq(deepcopy(model), device=device)
+        model = run_e3nn_to_cueq(
+            extract_model(model, map_location=str(device)), device=device
+        )
     if args.enable_oeq:
         logging.info("Converting model to OEQ for accelerated training")
         assert model.__class__.__name__ in ["MACE", "ScaleShiftMACE", "MACELES"]
-        model = run_e3nn_to_oeq(deepcopy(model), device=device)
+        model = run_e3nn_to_oeq(
+            extract_model(model, map_location=str(device)), device=device
+        )
 
     # Optimizer
     param_options = get_params_options(args, model)
@@ -989,6 +1008,13 @@ def run(args) -> None:
             swa=swa_eval,
             device=device,
         )
+        if epoch is None:
+            logging.warning(
+                "No checkpoint found for tag %r (swa=%s); exporting .model from "
+                "in-memory weights. With EMA, ensure training wrote a final checkpoint.",
+                tag,
+                swa_eval,
+            )
         model.to(device)
         if args.distributed:
             # re-enable gradients for distributed model for evaluation of stage-two model
@@ -1009,13 +1035,19 @@ def run(args) -> None:
             else:
                 model_path = Path(args.checkpoints_dir) / (tag + ".model")
             logging.info(f"Saving model to {model_path}")
-            model_to_save = deepcopy(model)
+            # Rebuild from config+weights instead of deepcopy: e3nn JIT wraps leave
+            # ScriptFunction nodes that cannot be pickled or deep-copied.
+            model_to_save = extract_model(model, map_location=str(device))
             if args.enable_cueq and not args.only_cueq:
                 logging.info("RUNING CUEQ TO E3NN")
-                model_to_save = run_cueq_to_e3nn(deepcopy(model), device=device)
+                model_to_save = run_cueq_to_e3nn(
+                    extract_model(model, map_location=str(device)), device=device
+                )
             if args.enable_oeq:
                 logging.info("RUNING OEQ TO E3NN")
-                model_to_save = run_oeq_to_e3nn(deepcopy(model), device=device)
+                model_to_save = run_oeq_to_e3nn(
+                    extract_model(model, map_location=str(device)), device=device
+                )
             if args.save_cpu:
                 model_to_save = model_to_save.to("cpu")
             torch.save(model_to_save, model_path)
@@ -1035,7 +1067,9 @@ def run(args) -> None:
                         args.name + "_stagetwo_compiled.model"
                     )
                     logging.info(f"Compiling model, saving metadata {path_complied}")
-                    model_compiled = jit.compile(deepcopy(model_to_save))
+                    model_compiled = jit.compile(
+                        extract_model(model_to_save, map_location="cpu")
+                    )
                     torch.jit.save(
                         model_compiled,
                         path_complied,
@@ -1050,7 +1084,9 @@ def run(args) -> None:
                         args.name + "_compiled.model"
                     )
                     logging.info(f"Compiling model, saving metadata to {path_complied}")
-                    model_compiled = jit.compile(deepcopy(model_to_save))
+                    model_compiled = jit.compile(
+                        extract_model(model_to_save, map_location="cpu")
+                    )
                     torch.jit.save(
                         model_compiled,
                         path_complied,

@@ -229,13 +229,13 @@ python ./mace/scripts/run_train.py \
 
 ## Weights and Biases for experiment tracking
 
-Weights and Biases logging is enabled by default during training. Before running training, authenticate once with:
+If you would like to use MACE with Weights and Biases to log your experiments simply install with
 
 ```sh
-wandb login
+pip install ./mace[wandb]
 ```
 
-Then specify the necessary keyword arguments (`--wandb_project`, `--wandb_entity`, `--wandb_name`, `--wandb_log_hypers`). To disable logging for a run, use `--wandb=False`.
+And specify the necessary keyword arguments (`--wandb`, `--wandb_project`, `--wandb_entity`, `--wandb_name`, `--wandb_log_hypers`)
 
 ## Pretrained Foundation Models
 

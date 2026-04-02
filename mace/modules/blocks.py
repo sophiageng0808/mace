@@ -8,6 +8,7 @@ from abc import abstractmethod
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 import torch.nn.functional
 from e3nn import nn, o3
 from e3nn.util.jit import compile_mode
@@ -31,10 +32,66 @@ from .radial import (
     BesselBasis,
     ChebychevBasis,
     GaussianBasis,
+    PairRepulsionSwitch,
     PolynomialCutoff,
+    R12Repulsion,
     RadialMLP,
     SoftTransform,
+    ZBLRepulsion,
 )
+
+
+def build_pair_repulsion(
+    *,
+    num_polynomial_cutoff: int,
+    pair_repulsion_kinds: Optional[Union[List[str], str]],
+    zbl_p: int,
+    zbl_scale: float,
+    r12_scale: float,
+    r12_cutoff: Optional[float],
+    r12_switch_width: Optional[float],
+    pair_repulsion_r_min: float,
+) -> torch.nn.Module:
+    if pair_repulsion_kinds is None:
+        pair_repulsion_kinds = ["zbl"]
+    if isinstance(pair_repulsion_kinds, str):
+        pair_repulsion_kinds = [
+            k.strip() for k in pair_repulsion_kinds.split(",") if k.strip()
+        ]
+    kinds_list = [k for k in pair_repulsion_kinds if k]
+    if len(kinds_list) != 1 or kinds_list[0] not in ("zbl", "r12"):
+        raise ValueError(
+            "pair_repulsion_kinds must be exactly ['zbl'] or ['r12']; "
+        )
+    pair_repulsion_kinds = kinds_list
+    # One submodule only: smaller state_dict and no dead parameters for the unused term.
+    if pair_repulsion_kinds[0] == "zbl":
+        zbl_mod = ZBLRepulsion(
+            p=zbl_p,
+            scale=zbl_scale,
+            r_min=pair_repulsion_r_min,
+            apply_cutoff=True,
+            assume_directed_double=True,
+        )
+        return PairRepulsionSwitch(
+            kinds=pair_repulsion_kinds,
+            zbl=zbl_mod,
+            r12=None,
+        )
+    r12_mod = R12Repulsion(
+        p=num_polynomial_cutoff,
+        c12=r12_scale,
+        r_min=pair_repulsion_r_min,
+        apply_cutoff=True,
+        assume_directed_double=True,
+        r12_cutoff=r12_cutoff,
+        r12_switch_width=r12_switch_width,
+    )
+    return PairRepulsionSwitch(
+        kinds=pair_repulsion_kinds,
+        zbl=None,
+        r12=r12_mod,
+    )
 
 
 @compile_mode("script")

@@ -22,6 +22,7 @@ from .blocks import (
     RealAgnosticResidualInteractionBlock,
     RealAgnosticResidualNonLinearInteractionBlock,
     ScaleShiftBlock,
+    build_pair_repulsion,
 )
 from .loss import (
     DipolePolarLoss,
@@ -30,6 +31,7 @@ from .loss import (
     WeightedEnergyForcesDipoleLoss,
     WeightedEnergyForcesL1L2Loss,
     WeightedEnergyForcesLoss,
+    WeightedEnergyForcesMAELoss,
     WeightedEnergyForcesStressLoss,
     WeightedEnergyForcesVirialsLoss,
     WeightedForcesLoss,
@@ -42,7 +44,15 @@ from .models import (
     EnergyDipolesMACE,
     ScaleShiftMACE,
 )
-from .radial import BesselBasis, GaussianBasis, PolynomialCutoff, ZBLBasis
+from .radial import (
+    BesselBasis,
+    GaussianBasis,
+    PairRepulsionSwitch,
+    PolynomialCutoff,
+    R12Repulsion,
+    ZBLBasis,
+    ZBLRepulsion,
+)
 from .symmetric_contraction import SymmetricContraction
 from .utils import (
     compute_avg_num_neighbors,
@@ -89,6 +99,10 @@ __all__ = [
     "AtomicEnergiesBlock",
     "RadialEmbeddingBlock",
     "ZBLBasis",
+    "ZBLRepulsion",
+    "R12Repulsion",
+    "PairRepulsionSwitch",
+    "build_pair_repulsion",
     "LinearNodeEmbeddingBlock",
     "LinearReadoutBlock",
     "EquivariantProductBasisBlock",
@@ -108,6 +122,7 @@ __all__ = [
     "AtomicDielectricMACE",
     "EnergyDipolesMACE",
     "WeightedEnergyForcesLoss",
+    "WeightedEnergyForcesMAELoss",
     "WeightedForcesLoss",
     "WeightedEnergyForcesVirialsLoss",
     "WeightedEnergyForcesStressLoss",

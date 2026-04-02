@@ -1,43 +1,88 @@
-# Byte-compiled / optimized / DLL files
+# --- Python ---
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Distribution / packaging
-build/
+*.so
+.Python
+*.egg
 *.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+__pypackages__/
 
-# pytest
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.macevenv/
+
+# --- Tools ---
 .pytest_cache/
-
-# mypy
 .mypy_cache/
+.ruff_cache/
+.benchmarks/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
 
-# IDE
+# --- IDE / OS ---
 .idea/
 .vscode/
-*.txt
-*.log
-*.err
-*.out
-outslurm
-
-# Distribution
-dist/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# DS_Store
+*.swp
+*~
 .DS_Store
-*.models
-*.pt
-/wandb
-*.xyz
-/checkpoints
-*.model
-/results
-*.db
 
-.benchmarks
-*.png
+# --- Secrets / local env ---
+.env
+.env.*
+!.env.example
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Training / inference artifacts ---
+wandb/
+**/wandb/
+checkpoints/
+**/checkpoints/
+results/
+**/results/
+*.pt
+*.pth
+*.ckpt
+*.model
+*.models
+
+# --- Slurm / batch logs ---
+outslurm/
+*.log
+*.out
+*.err
+
+# --- Shell scripts (local / cluster; not versioned on this branch) ---
+*.sh
+!scripts/run_checks.sh
+
+# --- Branch-specific outputs (dissociation scans, plots, etc.) ---
+outputs/
+
+# --- Databases / caches ---
+*.db
+*.mdb
+*.lmdb-journal
+
+# --- Matplotlib / font caches (often under $HOME; ignore if copied into repo) ---
+.mplconfig/
+.cache/
+
+# --- Optional: large local datasets (uncomment if you never commit these) ---
+# *.h5
+# *.hdf5
+# *.xyz
+# *.lmdb/

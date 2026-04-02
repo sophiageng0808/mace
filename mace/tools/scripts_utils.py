@@ -224,6 +224,48 @@ def print_git_commit():
         return "None"
 
 
+def _repulsion_config_from_model(model_obj: torch.nn.Module) -> Dict[str, Any]:
+    """Read ``pair_repulsion_fn`` hyperparameters for checkpoint JSON (only one of zbl/r12 exists)."""
+    cfg: Dict[str, Any] = {}
+    if not hasattr(model_obj, "pair_repulsion_fn"):
+        cfg["pair_repulsion"] = False
+        return cfg
+    rep = model_obj.pair_repulsion_fn
+    cfg["pair_repulsion"] = True
+    cfg["pair_repulsion_kinds"] = getattr(rep, "kinds", None)
+    zbl = getattr(rep, "zbl", None)
+    if zbl is not None and hasattr(zbl, "p"):
+        try:
+            cfg["zbl_p"] = int(zbl.p)
+        except (TypeError, ValueError):
+            cfg["zbl_p"] = zbl.p
+    if zbl is not None and hasattr(zbl, "scale"):
+        try:
+            cfg["zbl_scale"] = float(zbl.scale.item())
+        except (AttributeError, ValueError):
+            cfg["zbl_scale"] = float(zbl.scale)
+    if zbl is not None and hasattr(zbl, "r_min"):
+        cfg["pair_repulsion_r_min"] = float(zbl.r_min)
+    r12 = getattr(rep, "r12", None)
+    if "pair_repulsion_r_min" not in cfg and r12 is not None and hasattr(r12, "r_min"):
+        cfg["pair_repulsion_r_min"] = float(r12.r_min)
+    if r12 is not None and hasattr(r12, "c12"):
+        cfg["r12_scale"] = float(r12.c12)
+    if r12 is not None and hasattr(r12, "r12_cutoff"):
+        try:
+            cutoff_val = float(r12.r12_cutoff.item())
+        except (AttributeError, ValueError):
+            cutoff_val = float(r12.r12_cutoff)
+        cfg["r12_cutoff"] = None if cutoff_val <= 0 else cutoff_val
+    if r12 is not None and hasattr(r12, "r12_switch_width"):
+        try:
+            width_val = float(r12.r12_switch_width.item())
+        except (AttributeError, ValueError):
+            width_val = float(r12.r12_switch_width)
+        cfg["r12_switch_width"] = None if width_val <= 0 else width_val
+    return cfg
+
+
 def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
     if model.__class__.__name__ not in ["ScaleShiftMACE", "MACELES"]:
         return {"error": "Model is not a ScaleShiftMACE or MACELES model"}
@@ -260,6 +302,7 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         )
     except AttributeError:
         correlation = model.products[0].symmetric_contractions.contraction_degree
+    repulsion_cfg = _repulsion_config_from_model(model)
     config = {
         "r_max": model.r_max.item(),
         "num_bessel": len(model.radial_embedding.bessel_fn.bessel_weights),
@@ -317,11 +360,11 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
         ),
         "apply_cutoff": model.apply_cutoff if hasattr(model, "apply_cutoff") else True,
         "radial_MLP": extract_radial_MLP(model),
-        "pair_repulsion": hasattr(model, "pair_repulsion_fn"),
         "distance_transform": radial_to_transform(model.radial_embedding),
         "atomic_inter_scale": scale.cpu().numpy(),
         "atomic_inter_shift": shift.cpu().numpy(),
         "heads": heads,
+        **repulsion_cfg,
     }
     if model.__class__.__name__ == "AtomicDielectricMACE":
         config["use_polarizability"] = model.use_polarizability
@@ -525,7 +568,46 @@ def convert_from_json_format(dict_input):
     dict_output["correlation"] = int(dict_input["correlation"])
     dict_output["radial_type"] = dict_input["radial_type"]
     dict_output["radial_MLP"] = ast.literal_eval(dict_input["radial_MLP"])
-    dict_output["pair_repulsion"] = ast.literal_eval(dict_input["pair_repulsion"])
+    pr_val = dict_input["pair_repulsion"]
+    if isinstance(pr_val, str):
+        dict_output["pair_repulsion"] = ast.literal_eval(pr_val)
+    else:
+        dict_output["pair_repulsion"] = bool(pr_val)
+    if dict_output["pair_repulsion"]:
+        dict_output.setdefault("pair_repulsion_kinds", ["zbl"])
+        dict_output.setdefault("pair_repulsion_r_min", 0.2)
+        dict_output.setdefault("zbl_p", 6)
+        dict_output.setdefault("zbl_scale", 1.0)
+        dict_output.setdefault("r12_scale", 1.0)
+        dict_output.setdefault("r12_cutoff", None)
+        dict_output.setdefault("r12_switch_width", None)
+    if "pair_repulsion_kinds" in dict_input:
+        # Exactly one kind; legacy JSON may list two — keep first only.
+        pk = dict_input["pair_repulsion_kinds"]
+        if isinstance(pk, str):
+            pk = [pk]
+        if isinstance(pk, list) and len(pk) > 1:
+            pk = [pk[0]]
+        dict_output["pair_repulsion_kinds"] = pk
+    dict_output.pop("pair_repulsion_mode", None)
+    if "zbl_p" in dict_input:
+        dict_output["zbl_p"] = int(dict_input["zbl_p"])
+    if "zbl_scale" in dict_input:
+        dict_output["zbl_scale"] = float(dict_input["zbl_scale"])
+    if "r12_scale" in dict_input:
+        dict_output["r12_scale"] = float(dict_input["r12_scale"])
+    if "r12_cutoff" in dict_input:
+        dict_output["r12_cutoff"] = (
+            None if dict_input["r12_cutoff"] in (None, "None") else float(dict_input["r12_cutoff"])
+        )
+    if "r12_switch_width" in dict_input:
+        dict_output["r12_switch_width"] = (
+            None
+            if dict_input["r12_switch_width"] in (None, "None")
+            else float(dict_input["r12_switch_width"])
+        )
+    if "pair_repulsion_r_min" in dict_input:
+        dict_output["pair_repulsion_r_min"] = float(dict_input["pair_repulsion_r_min"])
     dict_output["distance_transform"] = dict_input["distance_transform"]
     dict_output["atomic_inter_scale"] = float(dict_input["atomic_inter_scale"])
     dict_output["atomic_inter_shift"] = float(dict_input["atomic_inter_shift"])
@@ -543,6 +625,29 @@ def load_from_json(f: str, map_location: str = "cpu") -> torch.nn.Module:
     )
     model_load_yaml.load_state_dict(model_jit_load.state_dict())
     return model_load_yaml.to(map_location)
+
+
+def _e0_json_entry_to_scalar(value):
+    """JSON may store one float per Z, or a dict of charge/state index -> energy (use neutral 0)."""
+    if isinstance(value, dict):
+        if not value:
+            raise ValueError("E0s JSON contains an empty object for an element.")
+        if "0" in value:
+            return float(value["0"])
+        if 0 in value:
+            return float(value[0])
+        if len(value) == 1:
+            return float(next(iter(value.values())))
+        raise ValueError(
+            "E0s JSON has multiple states for an element but no neutral entry '0'. "
+            f"Keys found: {list(value.keys())}. Use {{\"0\": energy_eV}} or a single float per Z."
+        )
+    return float(value)
+
+
+def parse_e0s_json_object(loaded: Dict[str, Any]) -> Dict[int, float]:
+    """Parse top-level E0s JSON object to atomic number -> isolated energy (eV)."""
+    return {int(key): _e0_json_entry_to_scalar(val) for key, val in loaded.items()}
 
 
 def get_atomic_energies(E0s, train_collection, z_table) -> dict:
@@ -568,10 +673,8 @@ def get_atomic_energies(E0s, train_collection, z_table) -> dict:
             if E0s.endswith(".json"):
                 logging.info(f"Loading atomic energies from {E0s}")
                 with open(E0s, "r", encoding="utf-8") as f:
-                    atomic_energies_dict = json.load(f)
-                    atomic_energies_dict = {
-                        int(key): value for key, value in atomic_energies_dict.items()
-                    }
+                    loaded = json.load(f)
+                atomic_energies_dict = parse_e0s_json_object(loaded)
             else:
                 try:
                     atomic_energies_eval = ast.literal_eval(E0s)
@@ -633,6 +736,10 @@ def get_loss_fn(
 ) -> torch.nn.Module:
     if args.loss == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
+            energy_weight=args.energy_weight, forces_weight=args.forces_weight
+        )
+    elif args.loss == "mae":
+        loss_fn = modules.WeightedEnergyForcesMAELoss(
             energy_weight=args.energy_weight, forces_weight=args.forces_weight
         )
     elif args.loss == "forces_only":
@@ -755,6 +862,14 @@ def get_swa(
         )
         logging.info(
             f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
+        )
+    elif args.loss == "mae":
+        loss_fn_energy = modules.WeightedEnergyForcesMAELoss(
+            energy_weight=args.swa_energy_weight,
+            forces_weight=args.swa_forces_weight,
+        )
+        logging.info(
+            f"Stage Two (after {args.start_swa} epochs) with loss function: {loss_fn_energy}, with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight} and learning rate : {args.swa_lr}"
         )
     else:
         loss_fn_energy = modules.WeightedEnergyForcesLoss(
@@ -956,23 +1071,49 @@ def dict_to_array(input_data, heads):
 
 
 class LRScheduler:
+    _PLATEAU_HOLD_PATIENCE = 10**9  # effectively infinite for ReduceLROnPlateau
+
     def __init__(self, optimizer, args) -> None:
         self.scheduler = args.scheduler
         self._optimizer_type = (
             args.optimizer
         )  # Schedulefree does not need an optimizer but checkpoint handler does.
+        hold = getattr(args, "scheduler_hold_epochs", 0)
+        self._hold_epochs = hold if isinstance(hold, int) and hold > 0 else None
+        self._plateau_patience = args.scheduler_patience
         if args.scheduler == "ExponentialLR":
             self.lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
                 optimizer=optimizer, gamma=args.lr_scheduler_gamma
             )
         elif args.scheduler == "ReduceLROnPlateau":
+            init_p = (
+                self._PLATEAU_HOLD_PATIENCE
+                if self._hold_epochs is not None
+                else args.scheduler_patience
+            )
             self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer=optimizer,
                 factor=args.lr_factor,
-                patience=args.scheduler_patience,
+                patience=init_p,
             )
         else:
             raise RuntimeError(f"Unknown scheduler: '{args.scheduler}'")
+
+    def sync_plateau_patience_for_epoch(self, epoch: int) -> None:
+        if self.scheduler != "ReduceLROnPlateau" or self._hold_epochs is None:
+            return
+        want = (
+            self._plateau_patience
+            if epoch >= self._hold_epochs
+            else self._PLATEAU_HOLD_PATIENCE
+        )
+        inner = self.lr_scheduler
+        if inner.patience != want:
+            inner.patience = want
+            inner.num_bad_epochs = 0
+            logging.info(
+                "ReduceLROnPlateau patience -> %s (epoch %s)", want, epoch
+            )
 
     def step(self, metrics=None, epoch=None):  # pylint: disable=E1123
         if self._optimizer_type == "schedulefree":

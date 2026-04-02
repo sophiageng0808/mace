@@ -126,7 +126,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "DipolePolarRMSE",
             "EnergyDipoleRMSE",
         ],
-        default="PerAtomRMSE",
+        default="PerAtomMAE",
     )
 
     # Model
@@ -167,11 +167,55 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
     )
+    # Pair repulsion: exactly one physics term. Omit --pair_repulsion for a model with no empirical pair energy.
     parser.add_argument(
         "--pair_repulsion",
-        help="use pair repulsion term with ZBL potential",
+        help="enable pair repulsion (exactly one of zbl or r12 via --pair_repulsion_kinds)",
         action="store_true",
         default=False,
+    )
+    parser.add_argument(
+        "--pair_repulsion_kinds",
+        help="single pair term: zbl (screened Coulomb) or r12 (r^-12); pass one value only",
+        nargs=1,
+        default=["zbl"],
+        choices=["zbl", "r12"],
+    )
+    parser.add_argument(
+        "--pair_repulsion_r_min",
+        help="floor on edge length (Å) inside ZBL and r^-12 formulas (avoids division blow-up)",
+        type=float,
+        default=0.2,
+    )
+    parser.add_argument(
+        "--zbl_p",
+        help="polynomial cutoff exponent p for ZBL repulsion envelope",
+        type=int,
+        default=6,
+    )
+    parser.add_argument(
+        "--zbl_scale",
+        help="scale factor for ZBL repulsion",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--r12_scale",
+        help="prefactor c12 for r^-12 repulsion",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--r12_cutoff",
+        help="optional extra cutoff (Ang) for r^-12; use None for no extra cutoff",
+        type=check_float_or_none,
+        default=None,
+    )
+    parser.add_argument(
+        "--r12_switch_width",
+        help="optional smooth switch width (Ang) for r^-12 cutoff",
+        type=check_float_or_none,
+        default=None,
     )
     parser.add_argument(
         "--distance_transform",
@@ -660,10 +704,11 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--loss",
         help="type of loss",
-        default="weighted",
+        default="mae",
         choices=[
             "ef",
             "weighted",
+            "mae",
             "forces_only",
             "virials",
             "stress",
@@ -792,7 +837,17 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--valid_batch_size", help="Validation batch size", type=int, default=10
     )
     parser.add_argument(
-        "--lr", help="Learning rate of optimizer", type=float, default=0.01
+        "--max_val_samples",
+        help="Use at most this many validation structures (random subset, seeded by --seed). "
+        "0 = use the full validation set.",
+        type=int,
+        default=10000,
+    )
+    parser.add_argument(
+        "--lr",
+        help="Learning rate of optimizer",
+        type=float,
+        default=1e-3,
     )
     parser.add_argument(
         "--swa_lr",
@@ -827,10 +882,23 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--scheduler", help="Type of scheduler", type=str, default="ReduceLROnPlateau"
     )
     parser.add_argument(
-        "--lr_factor", help="Learning rate factor", type=float, default=0.8
+        "--lr_factor",
+        help="ReduceLROnPlateau: multiply LR by this factor when validation loss plateaus",
+        type=float,
+        default=0.5,
     )
     parser.add_argument(
-        "--scheduler_patience", help="Learning rate factor", type=int, default=50
+        "--scheduler_patience",
+        help="ReduceLROnPlateau: epochs without val loss improvement before lowering LR",
+        type=int,
+        default=24,
+    )
+    parser.add_argument(
+        "--scheduler_hold_epochs",
+        help="ReduceLROnPlateau: keep LR fixed for this many epochs (infinite patience "
+        "on plateau during this phase), then use --scheduler_patience. 0 = disabled.",
+        type=int,
+        default=0,
     )
     parser.add_argument(
         "--lr_scheduler_gamma",
@@ -963,8 +1031,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--wandb",
         help="Use Weights and Biases for experiment tracking",
-        type=str2bool,
-        default=True,
+        action="store_true",
+        default=False,
     )
     parser.add_argument(
         "--wandb_dir",
@@ -1002,10 +1070,16 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "swa_lr",
             "weight_decay",
             "batch_size",
+            "max_samples_per_epoch",
+            "max_val_samples",
             "max_num_epochs",
             "start_swa",
             "energy_weight",
             "forces_weight",
+            "scheduler",
+            "scheduler_patience",
+            "scheduler_hold_epochs",
+            "lr_factor",
         ],
     )
     return parser

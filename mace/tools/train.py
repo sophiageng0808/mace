@@ -39,6 +39,65 @@ from .utils import (
 )
 
 
+def _wandb_scalar(x: Any) -> float:
+    """Coerce loss/metric values to float for Weights & Biases."""
+    if isinstance(x, (int, float, np.floating)):
+        return float(x)
+    if torch.is_tensor(x):
+        return float(x.detach().cpu().item())
+    return float(np.asarray(x).reshape(-1)[0])
+
+
+def _wandb_eval_metric(eval_metrics: Dict[str, Any], key: str) -> Optional[float]:
+    """Return a finite float metric for W&B, or None if missing / not numeric."""
+    try:
+        v = eval_metrics[key]
+    except (KeyError, TypeError):
+        return None
+    try:
+        x = float(np.asarray(v, dtype=np.float64).reshape(-1)[0])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(x):
+        return None
+    return x
+
+
+def _wandb_append_val_metrics(
+    target: Dict[str, Any],
+    eval_metrics: Dict[str, Any],
+    valid_loader_name: str,
+) -> None:
+    """Add validation RMSE/MAE (and stress/virial MAE when present) to a wandb log dict."""
+    rmse_e = _wandb_eval_metric(eval_metrics, "rmse_e_per_atom")
+    if rmse_e is not None:
+        target[f"val/rmse_e_per_atom/{valid_loader_name}"] = rmse_e
+    rmse_f = _wandb_eval_metric(eval_metrics, "rmse_f")
+    if rmse_f is not None:
+        target[f"val/rmse_f/{valid_loader_name}"] = rmse_f
+    mae_e = _wandb_eval_metric(eval_metrics, "mae_e_per_atom")
+    if mae_e is not None:
+        target[f"val/mae_e_per_atom/{valid_loader_name}"] = mae_e
+    mae_f = _wandb_eval_metric(eval_metrics, "mae_f")
+    if mae_f is not None:
+        target[f"val/mae_f/{valid_loader_name}"] = mae_f
+    mae_e_tot = _wandb_eval_metric(eval_metrics, "mae_e")
+    if mae_e_tot is not None:
+        target[f"val/mae_e/{valid_loader_name}"] = mae_e_tot
+    rmse_e_tot = _wandb_eval_metric(eval_metrics, "rmse_e")
+    if rmse_e_tot is not None:
+        target[f"val/rmse_e/{valid_loader_name}"] = rmse_e_tot
+    for mkey, wkey in (
+        ("mae_stress", "val/mae_stress"),
+        ("mae_virials", "val/mae_virials"),
+        ("rmse_stress", "val/rmse_stress"),
+        ("rmse_virials_per_atom", "val/rmse_virials_per_atom"),
+    ):
+        mv = _wandb_eval_metric(eval_metrics, mkey)
+        if mv is not None:
+            target[f"{wkey}/{valid_loader_name}"] = mv
+
+
 @dataclasses.dataclass
 class SWAContainer:
     model: AveragedModel
@@ -201,7 +260,7 @@ def train(
     global_step = start_epoch * max_steps_per_epoch
 
     # log validation loss before _any_ training
-    initial_wandb_log_dict = {}
+    initial_wandb_flat: Dict[str, Any] = {}
     for valid_loader_name, valid_loader in valid_loaders.items():
         valid_loss_head, eval_metrics = evaluate(
             model=model,
@@ -214,21 +273,25 @@ def train(
             valid_loss_head, eval_metrics, logger, log_errors, None, valid_loader_name
         )
         if log_wandb and rank == 0:
-            initial_wandb_log_dict[valid_loader_name] = {
-                "epoch": epoch,
-                "valid_loss": valid_loss_head,
-                "valid_rmse_e_per_atom": eval_metrics["rmse_e_per_atom"],
-                "valid_rmse_f": eval_metrics["rmse_f"],
-            }
+            initial_wandb_flat[f"loss/val/{valid_loader_name}"] = _wandb_scalar(
+                valid_loss_head
+            )
+            _wandb_append_val_metrics(
+                initial_wandb_flat, eval_metrics, valid_loader_name
+            )
     valid_loss = valid_loss_head  # consider only the last head for the checkpoint
     if log_wandb and rank == 0:
-        wandb.log(initial_wandb_log_dict, step=global_step)
+        initial_wandb_flat["epoch"] = epoch
+        initial_wandb_flat["loss/val"] = _wandb_scalar(valid_loss_head)
+        initial_wandb_flat["train/lr"] = float(optimizer.param_groups[0]["lr"])
+        wandb.log(initial_wandb_flat, step=global_step)
 
     # variable used for broadcast by rank == 0 if epoch loop is exited early, e.g. patience
     exit_now = torch.zeros(1, device=device) if distributed else None
     while epoch < max_num_epochs:
         # LR scheduler and SWA update
         if swa is None or epoch < swa.start:
+            lr_scheduler.sync_plateau_patience_for_epoch(epoch)
             if epoch > start_epoch:
                 lr_scheduler.step(
                     metrics=valid_loss
@@ -266,6 +329,7 @@ def train(
             log_wandb=log_wandb,
             global_step=global_step,
             max_samples_per_epoch=max_samples_per_epoch,
+            wandb_log_lr=True,
         )
         if distributed:
             torch.distributed.barrier()
@@ -281,7 +345,7 @@ def train(
             if "ScheduleFree" in type(optimizer).__name__:
                 optimizer.eval()
             with param_context:
-                wandb_log_dict = {}
+                wandb_val_flat: Dict[str, Any] = {}
                 for valid_loader_name, valid_loader in valid_loaders.items():
                     valid_loss_head, eval_metrics = evaluate(
                         model=model_to_evaluate,
@@ -300,14 +364,12 @@ def train(
                             valid_loader_name,
                         )
                         if log_wandb:
-                            wandb_log_dict[valid_loader_name] = {
-                                "epoch": epoch,
-                                "valid_loss": valid_loss_head,
-                                "valid_rmse_e_per_atom": eval_metrics[
-                                    "rmse_e_per_atom"
-                                ],
-                                "valid_rmse_f": eval_metrics["rmse_f"],
-                            }
+                            wandb_val_flat[f"loss/val/{valid_loader_name}"] = (
+                                _wandb_scalar(valid_loss_head)
+                            )
+                            _wandb_append_val_metrics(
+                                wandb_val_flat, eval_metrics, valid_loader_name
+                            )
                 if plotter and epoch % plotter.plot_frequency == 0:
                     try:
                         plotter.plot(epoch, model_to_evaluate, rank)
@@ -316,8 +378,11 @@ def train(
                 valid_loss = (
                     valid_loss_head  # consider only the last head for the checkpoint
                 )
-            if log_wandb:
-                wandb.log(wandb_log_dict, step=global_step)
+            if log_wandb and rank == 0:
+                wandb_val_flat["epoch"] = epoch
+                wandb_val_flat["loss/val"] = _wandb_scalar(valid_loss)
+                wandb_val_flat["train/lr"] = float(optimizer.param_groups[0]["lr"])
+                wandb.log(wandb_val_flat, step=global_step)
             if rank == 0:
                 if valid_loss >= lowest_loss:
                     patience_counter += 1
@@ -367,6 +432,28 @@ def train(
 
         epoch += 1
 
+    # Always persist the latest weights after training so run_train can load them and
+    # export .model files (avoids missing or stale .pt when the last epoch did not
+    # trigger a periodic checkpoint, e.g. patience stop without save_all_checkpoints).
+    if rank == 0:
+        final_ckpt_epoch = epoch - 1 if epoch == max_num_epochs else epoch
+        if final_ckpt_epoch >= start_epoch:
+            param_context = (
+                ema.average_parameters() if ema is not None else nullcontext()
+            )
+            with param_context:
+                checkpoint_handler.save(
+                    state=CheckpointState(model, optimizer, lr_scheduler),
+                    epochs=final_ckpt_epoch,
+                    keep_last=True,
+                )
+            logging.info(
+                "Saved final checkpoint (epoch %s) for export to .model",
+                final_ckpt_epoch,
+            )
+    if distributed:
+        torch.distributed.barrier()
+
     logging.info("Training complete")
 
 
@@ -387,6 +474,7 @@ def train_one_epoch(
     log_wandb: bool = False,
     global_step: int = 0,
     max_samples_per_epoch: int = 200000,
+    wandb_log_lr: bool = True,
 ) -> int:
     model_to_train = model if distributed_model is None else distributed_model
     if log_wandb and rank == 0:
@@ -412,13 +500,13 @@ def train_one_epoch(
             logger.log(opt_metrics)
             global_step += 1
             if log_wandb:
-                wandb.log(
-                    {
-                        "train_loss": opt_metrics["loss"],
-                        "epoch": epoch,
-                    },
-                    step=global_step,
-                )
+                wb_train: Dict[str, Any] = {
+                    "loss/train": _wandb_scalar(opt_metrics["loss"]),
+                    "epoch": epoch,
+                }
+                if wandb_log_lr:
+                    wb_train["train/lr"] = float(optimizer.param_groups[0]["lr"])
+                wandb.log(wb_train, step=global_step)
     else:
         samples_processed = 0
         for batch in data_loader:
@@ -438,13 +526,15 @@ def train_one_epoch(
                 logger.log(opt_metrics)
                 global_step += 1
                 if log_wandb:
-                    wandb.log(
-                        {
-                            "train_loss": opt_metrics["loss"],
-                            "epoch": epoch,
-                        },
-                        step=global_step,
-                    )
+                    wb_train = {
+                        "loss/train": _wandb_scalar(opt_metrics["loss"]),
+                        "epoch": epoch,
+                    }
+                    if wandb_log_lr:
+                        wb_train["train/lr"] = float(
+                            optimizer.param_groups[0]["lr"]
+                        )
+                    wandb.log(wb_train, step=global_step)
             samples_processed += batch.num_graphs
             if samples_processed >= max_samples_per_epoch:
                 break

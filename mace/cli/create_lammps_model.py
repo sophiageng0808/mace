@@ -1,6 +1,5 @@
 # pylint: disable=wrong-import-position
 import argparse
-import copy
 import os
 
 os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
@@ -11,6 +10,7 @@ from e3nn.util import jit
 from mace.calculators import LAMMPS_MACE
 from mace.calculators.lammps_mliap_mace import LAMMPS_MLIAP_MACE
 from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
+from mace.tools.scripts_utils import extract_model
 
 
 def parse_args():
@@ -88,7 +88,7 @@ def main():
 
     if args.format == "mliap":
         # Enabling cuequivariance by default. TODO: switch?
-        model = run_e3nn_to_cueq(copy.deepcopy(model))
+        model = run_e3nn_to_cueq(extract_model(model, map_location="cpu"))
         model.lammps_mliap = True
 
     if args.head is None:

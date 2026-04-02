@@ -2,6 +2,8 @@ from argparse import ArgumentParser
 
 import torch
 
+from mace.tools.scripts_utils import extract_model
+
 
 def main():
     parser = ArgumentParser()
@@ -24,6 +26,8 @@ def main():
 
     model = torch.load(args.model_file, weights_only=False)
     model.to(args.target_device)
+    # Rebuild so torch.save does not hit unpicklable e3nn ScriptFunction nodes.
+    model = extract_model(model, map_location=args.target_device)
     torch.save(model, args.output_file)
 
 
