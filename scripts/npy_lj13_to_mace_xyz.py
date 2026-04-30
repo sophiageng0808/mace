@@ -180,8 +180,10 @@ def main() -> None:
     n_frames = raw_flat.shape[0]
     pos = raw_flat.reshape(n_frames, n_particles, 3)
 
-    shift = np.full(3, 0.5 * args.box)
-    pos = pos - pos.mean(axis=1, keepdims=True) + shift
+    # COM-centered in the cell; no half-box (+L/2) shift.
+    # shift = np.full(3, 0.5 * args.box)
+    # pos = pos - pos.mean(axis=1, keepdims=True) + shift
+    pos = pos - pos.mean(axis=1, keepdims=True)
 
     if energies_npz is not None:
         energies = energies_npz.astype(np.float64)

@@ -96,6 +96,8 @@ def run(args) -> None:
     args.key_specification = KeySpecification()
     update_keyspec_from_kwargs(args.key_specification, vars(args))
 
+    use_wandb = bool(args.wandb or getattr(args, "wandb_offline", False))
+
     if args.device == "xpu":
         try:
             import intel_extension_for_pytorch as ipex
@@ -850,7 +852,7 @@ def run(args) -> None:
             if opt_start_epoch is not None:
                 start_epoch = opt_start_epoch
 
-    if args.wandb:
+    if use_wandb:
         setup_wandb(args)
     if args.distributed:
         distributed_model = DDP(model, device_ids=[local_rank])
@@ -920,7 +922,7 @@ def run(args) -> None:
         ema=ema,
         max_grad_norm=args.clip_grad,
         log_errors=args.error_table,
-        log_wandb=args.wandb,
+        log_wandb=use_wandb,
         distributed=args.distributed,
         distributed_model=distributed_model,
         plotter=plotter,
@@ -1107,7 +1109,7 @@ def run(args) -> None:
             model=model_to_evaluate,
             loss_fn=loss_fn,
             output_args=output_args,
-            log_wandb=args.wandb,
+            log_wandb=use_wandb,
             device=device,
             distributed=args.distributed,
             skip_heads=skip_heads,
@@ -1121,7 +1123,7 @@ def run(args) -> None:
                 model=model_to_evaluate,
                 loss_fn=loss_fn,
                 output_args=output_args,
-                log_wandb=args.wandb,
+                log_wandb=use_wandb,
                 device=device,
                 distributed=args.distributed,
             )

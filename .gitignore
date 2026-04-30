@@ -19,6 +19,15 @@ ENV/
 env/
 .macevenv/
 
+*.pt
+*.aselmdb*
+*.aselmdb
+*.out
+*.err
+outputs
+data
+*.slurm
+
 # --- Tools ---
 .pytest_cache/
 .mypy_cache/

@@ -879,7 +879,11 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
-        "--scheduler", help="Type of scheduler", type=str, default="ReduceLROnPlateau"
+        "--scheduler",
+        help="Type of scheduler: ReduceLROnPlateau, ExponentialLR, or "
+        "CosineAnnealingWarmup (cosine decay with linear warmup)",
+        type=str,
+        default="CosineAnnealingWarmup",
     )
     parser.add_argument(
         "--lr_factor",
@@ -889,9 +893,10 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--scheduler_patience",
-        help="ReduceLROnPlateau: epochs without val loss improvement before lowering LR",
+        help="ReduceLROnPlateau only: validation checks without improvement before "
+        "lowering LR (ignored for CosineAnnealingWarmup / ExponentialLR)",
         type=int,
-        default=24,
+        default=50,
     )
     parser.add_argument(
         "--scheduler_hold_epochs",
@@ -902,9 +907,21 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--lr_scheduler_gamma",
-        help="Gamma of learning rate scheduler",
+        help="Gamma of learning rate scheduler (ExponentialLR only)",
         type=float,
         default=0.9993,
+    )
+    parser.add_argument(
+        "--warmup_epochs",
+        help="Linear LR warmup length in epochs (CosineAnnealingWarmup only)",
+        type=int,
+        default=10,
+    )
+    parser.add_argument(
+        "--cosine_eta_min",
+        help="Minimum learning rate for cosine phase (CosineAnnealingWarmup only)",
+        type=float,
+        default=0.0,
     )
     parser.add_argument(
         "--swa",
@@ -941,13 +958,16 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=0.99,
     )
     parser.add_argument(
-        "--max_num_epochs", help="Maximum number of epochs", type=int, default=2048
+        "--max_num_epochs", help="Maximum number of epochs", type=int, default=1000
     )
     parser.add_argument(
         "--patience",
-        help="Maximum number of consecutive epochs of increasing loss",
+        help="Early stopping: stop after this many consecutive validation passes "
+        "without beating the best validation loss (one count each time validation "
+        "runs; see --eval_interval). Default matches --max_num_epochs so the full "
+        "run is used unless you lower patience.",
         type=int,
-        default=2048,
+        default=1000,
     )
     parser.add_argument(
         "--foundation_model",
@@ -1035,6 +1055,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=False,
     )
     parser.add_argument(
+        "--wandb_offline",
+        help="Log to Weights and Biases in offline mode (enables W&B if --wandb is not set; no network; sync later with wandb sync <run_dir>)",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
         "--wandb_dir",
         help="An absolute path to a directory where Weights and Biases metadata will be stored",
         type=str,
@@ -1080,6 +1106,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "scheduler_patience",
             "scheduler_hold_epochs",
             "lr_factor",
+            "warmup_epochs",
+            "cosine_eta_min",
         ],
     )
     return parser

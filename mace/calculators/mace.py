@@ -194,11 +194,27 @@ class MACECalculator(Calculator):
                 raise ValueError("No mace file names supplied")
             self.num_models = len(model_paths)
 
-            # Load models from files
-            self.models = [
-                torch.load(f=model_path, map_location=device)
-                for model_path in model_paths
-            ]
+            # Load models from files (exported *.model pickles), not *_epoch-*.pt checkpoints
+            def _load_mace_file(model_path):
+                loaded = torch.load(f=model_path, map_location=device)
+                if isinstance(loaded, dict):
+                    if "optimizer" in loaded or (
+                        "model" in loaded
+                        and isinstance(loaded["model"], dict)
+                    ):
+                        raise ValueError(
+                            f"{model_path} looks like a training checkpoint (weight "
+                            f"state_dicts), not an exported MACE nn.Module. Use the "
+                            f"`.model` file under checkpoints/ from the end of training "
+                            f"(same tag as the run, e.g. {{tag}}.model), not *_epoch-*.pt."
+                        )
+                    raise ValueError(
+                        f"{model_path} loaded a plain dict; MACECalculator expects a "
+                        f"pickled MACE model (typically {{tag}}.model)."
+                    )
+                return loaded
+
+            self.models = [_load_mace_file(model_path) for model_path in model_paths]
 
         elif models is not None:
             if not isinstance(models, list):

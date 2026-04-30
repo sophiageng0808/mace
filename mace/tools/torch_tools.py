@@ -129,10 +129,17 @@ def voigt_to_matrix(t: torch.Tensor):
     )
 
 
-def init_wandb(project: str, entity: str, name: str, config: dict, directory: str):
+def init_wandb(
+    project: str,
+    entity: str,
+    name: str,
+    config: dict,
+    directory: str,
+    offline: bool = False,
+):
     import wandb
 
-    wandb.init(
+    kwargs = dict(
         project=project,
         entity=entity,
         name=name,
@@ -140,6 +147,9 @@ def init_wandb(project: str, entity: str, name: str, config: dict, directory: st
         dir=directory,
         resume="allow",
     )
+    if offline:
+        kwargs["mode"] = "offline"
+    wandb.init(**kwargs)
 
 
 @contextmanager

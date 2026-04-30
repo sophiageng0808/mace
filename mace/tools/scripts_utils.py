@@ -17,6 +17,14 @@ import numpy as np
 import torch
 import torch.distributed
 from e3nn import o3
+from torch.optim.lr_scheduler import (
+    CosineAnnealingLR,
+    ExponentialLR,
+    LambdaLR,
+    LinearLR,
+    ReduceLROnPlateau,
+    SequentialLR,
+)
 from torch.optim.swa_utils import SWALR, AveragedModel
 
 from mace import data, modules, tools
@@ -1017,6 +1025,11 @@ def get_optimizer(
 
 def setup_wandb(args: argparse.Namespace):
     logging.info("Using Weights and Biases for logging")
+    if getattr(args, "wandb_offline", False):
+        logging.info(
+            "Weights & Biases offline mode: logs under wandb dir; "
+            "upload later with `wandb sync <run_dir>`"
+        )
     import wandb
 
     wandb_config = {}
@@ -1041,6 +1054,7 @@ def setup_wandb(args: argparse.Namespace):
         name=args.wandb_name,
         config=wandb_config,
         directory=args.wandb_dir,
+        offline=getattr(args, "wandb_offline", False),
     )
     wandb.run.summary["params"] = args_dict_json
 
@@ -1070,6 +1084,42 @@ def dict_to_array(input_data, heads):
     return result_array
 
 
+def _build_cosine_warmup_lr_scheduler(optimizer, args: argparse.Namespace):
+    """Cosine decay with linear warmup; step once per epoch (see train loop)."""
+    max_epochs = args.max_num_epochs
+    warmup_epochs = max(0, int(getattr(args, "warmup_epochs", 0)))
+    eta_min = float(getattr(args, "cosine_eta_min", 0.0))
+    # One scheduler step at the start of each epoch after the first (epochs 1 .. N-1).
+    total_steps = max(0, max_epochs - 1)
+    if total_steps == 0:
+        return LambdaLR(optimizer, lr_lambda=lambda _epoch: 1.0)
+    warmup_epochs = min(warmup_epochs, total_steps)
+    cosine_steps = total_steps - warmup_epochs
+    if warmup_epochs == 0:
+        return CosineAnnealingLR(
+            optimizer, T_max=max(1, cosine_steps), eta_min=eta_min
+        )
+    if cosine_steps <= 0:
+        return LinearLR(
+            optimizer,
+            start_factor=1e-8,
+            end_factor=1.0,
+            total_iters=total_steps,
+        )
+    warmup = LinearLR(
+        optimizer,
+        start_factor=1e-8,
+        end_factor=1.0,
+        total_iters=warmup_epochs,
+    )
+    cosine = CosineAnnealingLR(
+        optimizer, T_max=max(1, cosine_steps), eta_min=eta_min
+    )
+    return SequentialLR(
+        optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs]
+    )
+
+
 class LRScheduler:
     _PLATEAU_HOLD_PATIENCE = 10**9  # effectively infinite for ReduceLROnPlateau
 
@@ -1082,7 +1132,7 @@ class LRScheduler:
         self._hold_epochs = hold if isinstance(hold, int) and hold > 0 else None
         self._plateau_patience = args.scheduler_patience
         if args.scheduler == "ExponentialLR":
-            self.lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            self.lr_scheduler = ExponentialLR(
                 optimizer=optimizer, gamma=args.lr_scheduler_gamma
             )
         elif args.scheduler == "ReduceLROnPlateau":
@@ -1091,11 +1141,13 @@ class LRScheduler:
                 if self._hold_epochs is not None
                 else args.scheduler_patience
             )
-            self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.lr_scheduler = ReduceLROnPlateau(
                 optimizer=optimizer,
                 factor=args.lr_factor,
                 patience=init_p,
             )
+        elif args.scheduler == "CosineAnnealingWarmup":
+            self.lr_scheduler = _build_cosine_warmup_lr_scheduler(optimizer, args)
         else:
             raise RuntimeError(f"Unknown scheduler: '{args.scheduler}'")
 
@@ -1124,6 +1176,8 @@ class LRScheduler:
             self.lr_scheduler.step(  # pylint: disable=E1123
                 metrics=metrics, epoch=epoch
             )
+        elif self.scheduler == "CosineAnnealingWarmup":
+            self.lr_scheduler.step()
 
     def __getattr__(self, name):
         if name == "step":
