@@ -6,7 +6,7 @@
 
 import logging
 from contextlib import contextmanager
-from typing import Dict, Union
+from typing import Dict, Optional, Union
 
 import numpy as np
 import torch
@@ -136,9 +136,17 @@ def init_wandb(
     config: dict,
     directory: str,
     offline: bool = False,
+    group: Optional[str] = None,
 ):
+    import os
     import wandb
 
+    if not entity:
+        entity = os.environ.get(
+            "WANDB_ENTITY", "sophiageng0808-university-of-toronto"
+        )
+    if not project:
+        project = os.environ.get("WANDB_PROJECT", "mlips")
     kwargs = dict(
         project=project,
         entity=entity,
@@ -147,6 +155,8 @@ def init_wandb(
         dir=directory,
         resume="allow",
     )
+    if group:
+        kwargs["group"] = group
     if offline:
         kwargs["mode"] = "offline"
     wandb.init(**kwargs)

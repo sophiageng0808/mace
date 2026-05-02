@@ -726,6 +726,9 @@ if __name__ == "__main__":
         os.environ.setdefault("WANDB_DISABLED", "false")
         os.environ.setdefault("WANDB_DIR", str(group_dir / "wandb"))
         wandb.init(
+            entity=os.environ.get(
+                "WANDB_ENTITY", "sophiageng0808-university-of-toronto"
+            ),
             project="dmlip-dissociation-scan-overfit100",
             name=f"overfit100_scan_{run_id}",
             config={"group": group_name, "run_id": run_id, "device": device},

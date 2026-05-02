@@ -1055,6 +1055,7 @@ def setup_wandb(args: argparse.Namespace):
         config=wandb_config,
         directory=args.wandb_dir,
         offline=getattr(args, "wandb_offline", False),
+        group=getattr(args, "wandb_group", None) or None,
     )
     wandb.run.summary["params"] = args_dict_json
 

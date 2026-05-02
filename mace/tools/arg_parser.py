@@ -1026,6 +1026,26 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
     )
+    parser.add_argument(
+        "--export_trained_model_to",
+        help=(
+            "After building the model, load a checkpoint and save a pickled nn.Module "
+            "(same format as the training run's final .model), then exit. "
+            "Use the same CLI as training so the architecture matches the checkpoint."
+        ),
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--export_checkpoint_path",
+        help=(
+            "Explicit checkpoint .pt path for --export_trained_model_to "
+            "(basename must look like <tag>_epoch-<n>.pt). "
+            "Default: latest non-SWA checkpoint for this run tag in checkpoints_dir."
+        ),
+        type=str,
+        default=None,
+    )
     # option for cuequivariance acceleration
     parser.add_argument(
         "--enable_cueq",
@@ -1070,17 +1090,23 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--wandb_project",
         help="Weights and Biases project name",
         type=str,
-        default="",
+        default="mlips",
     )
     parser.add_argument(
         "--wandb_entity",
         help="Weights and Biases entity name",
         type=str,
-        default="",
+        default="sophiageng0808-university-of-toronto",
     )
     parser.add_argument(
         "--wandb_name",
         help="Weights and Biases experiment name",
+        type=str,
+        default="",
+    )
+    parser.add_argument(
+        "--wandb_group",
+        help="Weights and Biases run group (UI grouping)",
         type=str,
         default="",
     )
