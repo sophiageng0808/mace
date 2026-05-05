@@ -888,6 +888,45 @@ def run(args) -> None:
     else:
         plotter = None
 
+    export_to = getattr(args, "export_trained_model_to", None)
+    export_ckpt = getattr(args, "export_checkpoint_path", None)
+    if export_to:
+        if not export_ckpt:
+            raise ValueError(
+                "export_trained_model_to requires export_checkpoint_path (training *.pt)"
+            )
+        if rank == 0:
+            logging.info(
+                "export_trained_model_to: loading %s and writing %s",
+                export_ckpt,
+                export_to,
+            )
+            checkpoint_handler.load(
+                state=tools.CheckpointState(model, optimizer, lr_scheduler),
+                path=export_ckpt,
+                device=device,
+            )
+            out_path = Path(export_to)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            model_to_save = extract_model(model, map_location=str(device))
+            if args.save_cpu:
+                model_to_save = model_to_save.to("cpu")
+            try:
+                torch.save(model_to_save, out_path)
+            except Exception as exc:  # noqa: BLE001
+                logging.error(
+                    "export_trained_model_to: full-model torch.save failed: %s", exc
+                )
+                raise
+            logging.info(
+                "export_trained_model_to: wrote %s (%d bytes)",
+                out_path,
+                out_path.stat().st_size,
+            )
+        if args.distributed:
+            torch.distributed.barrier()
+        return
+
     if args.dry_run:
         logging.info("DRY RUN mode enabled. Stopping now.")
         return
