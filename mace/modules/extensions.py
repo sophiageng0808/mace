@@ -296,8 +296,8 @@ class MACELES(ScaleShiftMACE):
         # Match MACE output sanitization
         cv = _FORWARD_OUTPUT_CLAMP
         total_energy = torch.nan_to_num(
-            total_energy, posinf=cv, neginf=-cv
-        ).clamp(-cv, cv)
+            total_energy, nan=cv, posinf=cv, neginf=cv
+        ).clamp(max=cv)
         if forces is not None:
             forces = torch.nan_to_num(forces, posinf=cv, neginf=-cv).clamp(-cv, cv)
         if edge_forces is not None:

@@ -518,7 +518,11 @@ def remove_pt_head(
 
 
 def extract_model(model: torch.nn.Module, map_location: str = "cpu") -> torch.nn.Module:
-    model_copy = model.__class__(**extract_config_mace_model(model))
+    from mace.tools.compile import disable_e3nn_codegen
+
+    cfg = extract_config_mace_model(model)
+    with disable_e3nn_codegen():
+        model_copy = model.__class__(**cfg)
     model_copy.load_state_dict(model.state_dict())
     return model_copy.to(map_location)
 
@@ -1024,8 +1028,16 @@ def get_optimizer(
 
 
 def setup_wandb(args: argparse.Namespace):
+    import os
+
+    offline_flag = getattr(args, "wandb_offline", False)
+    wandb_mode_env = os.environ.get("WANDB_MODE", "").strip().lower()
+    force_offline = offline_flag or wandb_mode_env == "offline"
+    if force_offline:
+        os.environ["WANDB_MODE"] = "offline"
+
     logging.info("Using Weights and Biases for logging")
-    if getattr(args, "wandb_offline", False):
+    if force_offline:
         logging.info(
             "Weights & Biases offline mode: logs under wandb dir; "
             "upload later with `wandb sync <run_dir>`"
@@ -1054,7 +1066,7 @@ def setup_wandb(args: argparse.Namespace):
         name=args.wandb_name,
         config=wandb_config,
         directory=args.wandb_dir,
-        offline=getattr(args, "wandb_offline", False),
+        offline=force_offline,
         group=getattr(args, "wandb_group", None) or None,
     )
     wandb.run.summary["params"] = args_dict_json

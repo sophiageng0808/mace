@@ -139,6 +139,13 @@ def init_wandb(
     group: Optional[str] = None,
 ):
     import os
+
+    # Respect CLI offline flag and/or WANDB_MODE=offline (sync later).
+    wandb_mode_env = os.environ.get("WANDB_MODE", "").strip().lower()
+    force_offline = offline or wandb_mode_env == "offline"
+    if force_offline:
+        os.environ["WANDB_MODE"] = "offline"
+
     import wandb
 
     if not entity:
@@ -157,7 +164,7 @@ def init_wandb(
     )
     if group:
         kwargs["group"] = group
-    if offline:
+    if force_offline:
         kwargs["mode"] = "offline"
     wandb.init(**kwargs)
 

@@ -69,6 +69,7 @@ from mace.tools.scripts_utils import (
     get_optimizer,
     get_params_options,
     get_swa,
+    parse_e0s_json_object,
     print_git_commit,
     remove_pt_head,
     setup_wandb,
@@ -281,12 +282,18 @@ def run(args) -> None:
                 with open(statistics["atomic_energies"], "r", encoding="utf-8") as f:
                     atomic_energies = json.load(f)
                 head_config.E0s = atomic_energies
-                head_config.atomic_energies_dict = ast.literal_eval(atomic_energies)
+                head_config.atomic_energies_dict = parse_e0s_json_object(
+                    atomic_energies
+                )
             else:
                 head_config.E0s = statistics["atomic_energies"]
-                head_config.atomic_energies_dict = ast.literal_eval(
-                    statistics["atomic_energies"]
-                )
+                raw_ae = statistics["atomic_energies"]
+                if isinstance(raw_ae, str):
+                    parsed_ae = ast.literal_eval(raw_ae)
+                else:
+                    parsed_ae = raw_ae
+                # statistics may store one float per Z or nested charge-state dicts per Z
+                head_config.atomic_energies_dict = parse_e0s_json_object(parsed_ae)
         if head_config.train_file in (["mp"], ["matpes_pbe"], ["matpes_r2scan"]):
             assert (
                 head_config.head_name == "pt_head"
