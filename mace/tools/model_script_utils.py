@@ -11,6 +11,7 @@ from mace.tools.scripts_utils import extract_config_mace_model
 from mace.tools.utils import AtomicNumberTable
 
 
+# Implemented in this fork (vs original mace_og): map extended repulsion CLI → model kwargs.
 def _get_repulsion_kwargs(args):
     """Map CLI / merged config to ``MACE`` pair-repulsion keyword arguments."""
     pair_repulsion = bool(getattr(args, "pair_repulsion", False))
@@ -256,6 +257,7 @@ def _build_model(
             "RealAgnosticDensityInteractionBlock",
         ]:
             args.interaction_first = "RealAgnosticInteractionBlock"
+        # Implemented in this fork (vs original mace_og): inject full repulsion config (og: bool only).
         rep_kwargs = _get_repulsion_kwargs(args)
         return modules.ScaleShiftMACE(
             **model_config,
@@ -276,6 +278,7 @@ def _build_model(
             use_agnostic_product=args.use_agnostic_product,
         )
     if args.model == "ScaleShiftMACE":
+        # Implemented in this fork (vs original mace_og): inject full repulsion config (og: bool only).
         rep_kwargs = _get_repulsion_kwargs(args)
         return modules.ScaleShiftMACE(
             **model_config,
@@ -364,6 +367,7 @@ def _build_model(
     if args.model == "MACELES":
         from mace.modules.extensions import MACELES
 
+        # Implemented in this fork (vs original mace_og): inject full repulsion config (og: bool only).
         rep_kwargs = _get_repulsion_kwargs(args)
         return MACELES(
             les_arguments=args.les_arguments,

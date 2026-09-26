@@ -41,6 +41,8 @@ from .radial import (
 )
 
 
+# Implemented in this fork (vs original mace_og): factory for ZBL or r12 PairRepulsionSwitch
+# (og wired ZBLBasis directly when --pair_repulsion was set).
 def build_pair_repulsion(
     *,
     num_polynomial_cutoff: int,

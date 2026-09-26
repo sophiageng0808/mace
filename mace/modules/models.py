@@ -42,10 +42,12 @@ from .utils import (
     prepare_graph,
 )
 
+# Implemented in this fork (vs original mace_og): post-forward energy/force clamp.
 # After autograd, clamp reported energies/forces so loggers and downstream code never see huge non-finite spikes.
 _FORWARD_OUTPUT_CLAMP = 1.0e6
 
 
+# Implemented in this fork (vs original mace_og): MLIP vs pair energy/force diagnostics split.
 def _mlip_pair_decomposition(
     total_energy: torch.Tensor,
     pair_graph_energy: torch.Tensor,
@@ -109,6 +111,7 @@ class MACE(torch.nn.Module):
         correlation: Union[int, List[int]],
         gate: Optional[Callable],
         pair_repulsion: bool = False,
+        # Implemented in this fork (vs original mace_og): ZBL/r12 hyperparams (og: bool + ZBLBasis only).
         # Exactly one of zbl or r12 when pair_repulsion is True (see build_pair_repulsion).
         pair_repulsion_kinds: Optional[List[str]] = None,
         zbl_p: int = 6,
@@ -193,6 +196,7 @@ class MACE(torch.nn.Module):
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
         if pair_repulsion:
+            # Implemented in this fork (vs original mace_og): build_pair_repulsion wiring.
             # Optional empirical pair term (ZBL or r^-12); wired in forward separately from scale_shift.
             self.pair_repulsion_fn = build_pair_repulsion(
                 num_polynomial_cutoff=num_polynomial_cutoff,
@@ -386,6 +390,8 @@ class MACE(torch.nn.Module):
         edge_feats, cutoff = self.radial_embedding(
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
+        # Implemented in this fork (vs original mace_og): pair via pair_repulsion_fn (+ r_max);
+        # og used ZBLBasis without kind selection / r_max.
         # Pair repulsion: per-node energy in physical units; its own column in contributions (no scale_shift).
         if hasattr(self, "pair_repulsion_fn"):
             pair_node_e_scalar = self.pair_repulsion_fn(
@@ -490,6 +496,7 @@ class MACE(torch.nn.Module):
         )
 
         mlip_pair_decomposition: Optional[Dict[str, Optional[torch.Tensor]]] = None
+        # Implemented in this fork (vs original mace_og): optional MLIP/pair diagnostics return.
         if return_mlip_pair_decomposition:
             mlip_pair_decomposition = _mlip_pair_decomposition(
                 total_energy,
@@ -622,6 +629,8 @@ class ScaleShiftMACE(MACE):
             lengths, data["node_attrs"], data["edge_index"], self.atomic_numbers
         )
 
+        # Implemented in this fork (vs original mace_og): pair added AFTER scale_shift on MLIP only
+        # (og included pair inside the scale_shift sum).
         # Empirical pair term is added in eV-like units after scale_shift on the MLIP readout only.
         if hasattr(self, "pair_repulsion_fn"):
             pair_node_e_scalar = self.pair_repulsion_fn(
@@ -733,6 +742,7 @@ class ScaleShiftMACE(MACE):
         )
 
         mlip_pair_decomposition: Optional[Dict[str, Optional[torch.Tensor]]] = None
+        # Implemented in this fork (vs original mace_og): optional MLIP/pair diagnostics return.
         if return_mlip_pair_decomposition:
             pair_g = scatter_sum(
                 pair_node_energy, data["batch"], dim=0, dim_size=num_graphs

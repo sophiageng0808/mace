@@ -99,6 +99,7 @@ __all__ = [
     "AtomicEnergiesBlock",
     "RadialEmbeddingBlock",
     "ZBLBasis",
+    # Implemented in this fork (vs original mace_og): public exports for modular pair repulsion.
     "ZBLRepulsion",
     "R12Repulsion",
     "PairRepulsionSwitch",

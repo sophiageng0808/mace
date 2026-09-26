@@ -232,6 +232,7 @@ def print_git_commit():
         return "None"
 
 
+# Implemented in this fork (vs original mace_og): serialize full ZBL/r12 hyperparams from checkpoint.
 def _repulsion_config_from_model(model_obj: torch.nn.Module) -> Dict[str, Any]:
     """Read ``pair_repulsion_fn`` hyperparameters for checkpoint JSON (only one of zbl/r12 exists)."""
     cfg: Dict[str, Any] = {}
@@ -311,6 +312,7 @@ def extract_config_mace_model(model: torch.nn.Module) -> Dict[str, Any]:
     except AttributeError:
         correlation = model.products[0].symmetric_contractions.contraction_degree
     repulsion_cfg = _repulsion_config_from_model(model)
+    # Implemented in this fork (vs original mace_og): checkpoint JSON includes zbl/r12 params.
     config = {
         "r_max": model.r_max.item(),
         "num_bessel": len(model.radial_embedding.bessel_fn.bessel_weights),
@@ -585,6 +587,7 @@ def convert_from_json_format(dict_input):
         dict_output["pair_repulsion"] = ast.literal_eval(pr_val)
     else:
         dict_output["pair_repulsion"] = bool(pr_val)
+    # Implemented in this fork (vs original mace_og): restore zbl/r12 defaults on model reload.
     if dict_output["pair_repulsion"]:
         dict_output.setdefault("pair_repulsion_kinds", ["zbl"])
         dict_output.setdefault("pair_repulsion_r_min", 0.2)

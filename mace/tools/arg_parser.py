@@ -167,6 +167,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
     )
+    # Implemented in this fork (vs original mace_og): extended pair-repulsion CLI
+    # (kind + ZBL/r12 hyperparams); og had only --pair_repulsion bool.
     # Pair repulsion: exactly one physics term. Omit --pair_repulsion for a model with no empirical pair energy.
     parser.add_argument(
         "--pair_repulsion",

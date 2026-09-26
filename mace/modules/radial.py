@@ -14,6 +14,7 @@ from e3nn.util.jit import compile_mode
 
 from mace.tools.scatter import scatter_sum
 
+# Implemented in this fork (vs original mace_og): Coulomb prefactor for edge-based ZBL.
 KE = 14.3996454784255  # k_e in eV·Å; ZBL term uses k_e * Z_i * Z_j * φ(r/a) / r
 
 
@@ -223,6 +224,7 @@ class ZBLBasis(torch.nn.Module):
         return f"{self.__class__.__name__}(c={self.c})"
 
 
+# Implemented in this fork (vs original mace_og): helpers for modular pair repulsion.
 def _node_atomic_numbers_from_onehot(
     node_attrs: torch.Tensor,
     atomic_numbers: torch.Tensor,
@@ -270,6 +272,7 @@ def _split_edge_energy_to_nodes(
     return node_E
 
 
+# Implemented in this fork (vs original mace_og): edge-based ZBL (og used ZBLBasis only).
 class ZBLRepulsion(torch.nn.Module):
     """ZBL repulsion on edges (k_e Z_i Z_j φ(r/a)/r)"""
 
@@ -367,6 +370,7 @@ class ZBLRepulsion(torch.nn.Module):
         return V
 
 
+# Implemented in this fork (vs original mace_og): additive r^-12 short-range wall.
 @compile_mode("script")
 class R12Repulsion(torch.nn.Module):
     """r^-12 pair wall: c12/r^12 with outer (1−r/r_max)^p and optional inner cutoff."""
@@ -452,6 +456,7 @@ class R12Repulsion(torch.nn.Module):
         return V
 
 
+# Implemented in this fork (vs original mace_og): select exactly one of zbl or r12.
 class PairRepulsionSwitch(torch.nn.Module):
     """
     Single pair-repulsion term on edges: either ZBL or r^-12.

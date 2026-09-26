@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Implemented in this fork (vs original mace_og): bond-dissociation scan for baseline vs
+# ZBL/r12 repulsion models (monotonicity, clamp hits, force–energy consistency).
 import ast
 import csv
 import hashlib

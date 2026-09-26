@@ -144,6 +144,7 @@ class MACELES(ScaleShiftMACE):
         )
 
         # Pair term: same API as ScaleShiftMACE; not included in LES charge readouts.
+        # Implemented in this fork (vs original mace_og): MACELES pair-repulsion path (match ScaleShiftMACE).
         if hasattr(self, "pair_repulsion_fn"):
             pair_node_e_scalar = self.pair_repulsion_fn(
                 lengths=lengths,
@@ -276,6 +277,7 @@ class MACELES(ScaleShiftMACE):
         )
 
         mlip_pair_decomposition: Optional[Dict[str, Optional[torch.Tensor]]] = None
+        # Implemented in this fork (vs original mace_og): optional MLIP/pair diagnostics return.
         if return_mlip_pair_decomposition:
             pair_g = scatter_sum(
                 pair_node_energy, data["batch"], dim=0, dim_size=num_graphs
